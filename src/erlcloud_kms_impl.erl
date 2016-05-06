@@ -98,7 +98,6 @@ retry(Attempt, _) ->
 request_and_retry(_, _, _, {error, Reason}) ->
     {error, Reason};
 request_and_retry(Config, Headers, Body, {attempt, Attempt}) ->
-    io:format("~p~n~p~n",[Headers, Body]),
     RetryFun = Config#aws_config.kms_retry,
     case erlcloud_httpc:request(
            url(Config), post,
