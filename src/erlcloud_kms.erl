@@ -7,7 +7,9 @@
 
 -export([
          encrypt/2,encrypt/3,encrypt/4,encrypt/5,
-         decrypt/1,decrypt/2,decrypt/3,decrypt/4
+         decrypt/1,decrypt/2,decrypt/3,decrypt/4,
+         generate_data_key/2,generate_data_key/3,generate_data_key/4,generate_data_key/5,
+         generate_data_key_without_plaintext/2,generate_data_key_without_plaintext/3,generate_data_key_without_plaintext/4,generate_data_key_without_plaintext/5
         ]).
 
 -include_lib("erlcloud/include/erlcloud.hrl").
@@ -155,398 +157,97 @@ decrypt(CiphertextBlob, EncryptionContext, GrantTokens, Config) when is_record(C
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_CreateStream.html]
+%% KMS API:
+%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKey.html]
+%%
 %%
 %% ===Example===
 %%
-%% This operation adds a new Amazon kms stream to your AWS account.
+%% Generates a data key that you can use in your application to locally encrypt data. 
 %%
-%% `
-%% erlcloud_kms:create_stream(<<"test">>, 2).
-%%   {ok,{incomplete,#Fun<jsx_decoder.1.688044>}}
+%% erlcloud_kms:generate_data_key(<<"dcbb9a7f-9e69-49e3-a9cf-babf71954f03">>,<<"AES_256">>).
+%% {ok,[{<<"CiphertextBlob">>,
+%%      <<"CiAM3x4grcEaPbMDWyM2obIf+PN9fSGIb97Fr5dYbjV7pRKnAQEBAwB4DN8eIK3BGj2zA1sjNqGyH/jzfX0hiG/exa+XWG41"...>>},
+%%     {<<"KeyId">>,
+%%      <<"arn:aws:kms:us-east-1:399517187155:key/dcbb9a7f-9e69-49e3-a9cf-babf71954f03">>},
+%%     {<<"Plaintext">>,
+%%      <<"wpwtqGgs92XU3YSFdaAfxBOjd/6F2oM+bTfbDASrUiA=">>}]}
 %% '
 %%
 %% @end
 %%------------------------------------------------------------------------------
+-spec generate_data_key/2 :: (string(), string()) -> proplist().
 
--spec create_stream/2 :: (string(), 1..100) -> proplist().
+generate_data_key(KeyId, KeySpec) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKey", Json).
 
-create_stream(StreamName, ShardCount) when is_integer(ShardCount), ShardCount > 0, ShardCount =< 100 ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"ShardCount">>, ShardCount}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.CreateStream", Json).
+-spec generate_data_key/3 :: (string(), string(), string() | aws_config()) -> proplist().
 
--spec create_stream/3 :: (string(), 1..100, aws_config()) -> proplist().
+generate_data_key(KeyId, KeySpec, Config) when is_record(Config, aws_config) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(Config, "TrentService.GenerateDataKey", Json);
+generate_data_key(KeyId, KeySpec, ExplicitHashKey) ->
+   Json = [{<<"KeyId">>, KeyId},{<<"KeySpec">>, KeySpec},{<<"ExplicitHashKey">>, ExplicitHashKey}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKey", Json).
 
-create_stream(StreamName, ShardCount, Config) when is_record(Config, aws_config), is_integer(ShardCount), ShardCount > 0, ShardCount =< 100 ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"ShardCount">>, ShardCount}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.CreateStream", Json).
+-spec generate_data_key/4 :: (string(), proplist(), list(), string() ) -> proplist().
 
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_DeleteStream.html]
-%%
-%% ===Example===
-%%
-%% This operation deletes a stream and all of its shards and data.
-%%
-%% `
-%% erlcloud_kms:delete_stream(<<"test">>).
-%%   {ok,{incomplete,#Fun<jsx_decoder.1.688044>}}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
+generate_data_key(KeyId, EncryptionContext, GrantTokens, KeySpec) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"EncryptionContext">>, EncryptionContext}, {<<"GrantTokens">>, GrantTokens}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKey", Json).
 
--spec delete_stream/1 :: (string()) -> proplist().
+-spec generate_data_key/5 :: (string(), proplist(), list(), string(), aws_config() ) -> proplist().
 
-delete_stream(StreamName) ->
-   Json = [{<<"StreamName">>, StreamName}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.DeleteStream", Json).
-
--spec delete_stream/2 :: (string(), aws_config()) -> proplist().
-
-delete_stream(StreamName, Config) when is_record(Config, aws_config) ->
-   Json = [{<<"StreamName">>, StreamName}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.DeleteStream", Json).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_ListStreams.html]
-%%
-%% ===Example===
-%%
-%% This operation returns an array of the names of all the streams that are associated with the AWS account making the ListStreams request.
-%%
-%% `
-%% erlcloud_kms:list_streams().
-%%   {ok,[{<<"HasMoreStreams">>,false},
-%%    {<<"StreamNames">>,[<<"staging">>]}]}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec list_streams/0 :: () -> proplist().
-
-list_streams() ->
-   list_streams(default_config()).
-
--spec list_streams/1 :: (string() | aws_config()) -> proplist().
-
-list_streams(Config) when is_record(Config, aws_config) ->
-   erlcloud_kms_impl:request(Config, "kms_20131202.ListStreams", []);
-list_streams(ExclusiveStartStreamName) ->
-   Json = [{<<"ExclusiveStartStreamName">>, ExclusiveStartStreamName}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.ListStreams", Json).
-
--spec list_streams/2 :: (string(), 1..100 | aws_config()) -> proplist().
-
-list_streams(ExclusiveStartStreamName, Config) when is_record(Config, aws_config) ->
-   Json = [{<<"ExclusiveStartStreamName">>, ExclusiveStartStreamName}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.ListStreams", Json);
-list_streams(ExclusiveStartStreamName, Limit) when is_integer(Limit), Limit > 0, Limit =< 100 ->
-   Json = [{<<"ExclusiveStartStreamName">>, ExclusiveStartStreamName}, {<<"Limit">>, Limit}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.ListStreams", Json).
-
--spec list_streams/3 :: (string(), 1..100, aws_config()) -> proplist().
-
-list_streams(ExclusiveStartStreamName, Limit, Config) when is_record(Config, aws_config), is_integer(Limit), Limit > 0, Limit =< 100 ->
-   Json = [{<<"ExclusiveStartStreamName">>, ExclusiveStartStreamName}, {<<"Limit">>, Limit}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.ListStreams", Json).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_DescribeStream.html]
-%%
-%% ===Example===
-%%
-%% This operation returns the following information about the stream: the current status of the stream, the stream Amazon Resource Name (ARN), and an array of shard objects that comprise the stream.
-%%
-%% `
-%% erlcloud_kms:describe_stream(<<"staging">>).
-%%   {ok,[{<<"StreamDescription">>,
-%%    [{<<"HasMoreShards">>,false},
-%%     {<<"Shards">>,
-%%      [[{<<"HashKeyRange">>,
-%%         [{<<"EndingHashKey">>,
-%%           <<"170141183460469231731687303715884105727">>},
-%%          {<<"StartingHashKey">>,<<"0">>}]},
-%%        {<<"SequenceNumberRange">>,
-%%         [{<<"StartingSequenceNumber">>,
-%%           <<"495372647485535624187345081927970814089871018992"...>>}]},
-%%        {<<"ShardId">>,<<"shardId-000000000000">>}],
-%%       [{<<"HashKeyRange">>,
-%%         [{<<"EndingHashKey">>,
-%%           <<"340282366920938463463374607431768211455">>},
-%%          {<<"StartingHashKey">>,
-%%           <<"170141183460469231731687303715884105728">>}]},
-%%        {<<"SequenceNumberRange">>,
-%%         [{<<"StartingSequenceNumber">>,
-%%           <<"49537264748575863163933038815938617127259750"...>>}]},
-%%        {<<"ShardId">>,<<"shardId-000000000001">>}]]},
-%%     {<<"StreamARN">>,
-%%      <<"arn:aws:kms:us-east-1:821148768124:stream/staging">>},
-%%     {<<"StreamName">>,<<"staging">>},
-%%     {<<"StreamStatus">>,<<"ACTIVE">>}]}]}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec describe_stream/1 :: (string()) -> proplist().
-
-describe_stream(StreamName) ->
-   describe_stream(StreamName, default_config()).
-
--spec describe_stream/2 :: (string(), 1..100 | aws_config()) -> proplist().
-
-describe_stream(StreamName, Config) when is_record(Config, aws_config) ->
-   Json = [{<<"StreamName">>, StreamName}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.DescribeStream", Json);
-describe_stream(StreamName, Limit) when is_integer(Limit), Limit > 0, Limit =< 100 ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"Limit">>, Limit}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.DescribeStream", Json).
-
--spec describe_stream/3 :: (string(), 1..100, string() | aws_config()) -> proplist().
-
-describe_stream(StreamName, Limit, Config) when is_record(Config, aws_config) ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"Limit">>, Limit}],
-   erlcloud_kms_impl:request(Config, "kms_20131202.DescribeStream", Json);
-describe_stream(StreamName, Limit, ExcludeShard) when is_integer(Limit), Limit > 0, Limit =< 100 ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"Limit">>, Limit}, {<<"ExclusiveStartShardId">>, ExcludeShard}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.DescribeStream", Json).
-
--spec describe_stream/4 :: (string(), 1..100, string(), aws_config()) -> proplist().
-
-describe_stream(StreamName, Limit, ExcludeShard, Config) when is_record(Config, aws_config), is_integer(Limit), Limit > 0, Limit =< 100 ->
-   Json = [{<<"StreamName">>, StreamName}, {<<"Limit">>, Limit}, {<<"ExclusiveStartShardId">>, ExcludeShard}],
-   erlcloud_kms_impl:request(default_config(), "kms_20131202.DescribeStream", Json).
+generate_data_key(KeyId, EncryptionContext, GrantTokens, KeySpec, Config) when is_record(Config, aws_config) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"EncryptionContext">>, EncryptionContext}, {<<"GrantTokens">>, GrantTokens}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(Config, "TrentService.GenerateDataKey", Json).
 
 
 %%------------------------------------------------------------------------------
 %% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_GetShardIterator.html]
+%% KMS API:
+%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_GenerateDataKeyWithoutPlaintext.html]
+%%
 %%
 %% ===Example===
 %%
-%% This operation returns a shard iterator in ShardIterator. The shard iterator specifies the position in the shard from which you want to start reading data records sequentially.
+%% Returns a data key encrypted by a customer master key without the plaintext copy of that key.
 %%
-%% `
-%% erlcloud_kms:get_shard_iterator(<<"test">>, <<"shardId-000000000001">>, <<"TRIM_HORIZON">>).
-%%   {ok,[{<<"ShardIterator">>,
-%%    <<"AAAAAAAAAAFHJejL6/AjDShV3pIXsxYZT7Xj2G6EHxokHqT2D1stIOVYUEyprlUGWUepKqUDaR0+hB6qTlKvZa+fsBRqgHi4"...>>}]}
+%% erlcloud_kms:generate_data_key(<<"dcbb9a7f-9e69-49e3-a9cf-babf71954f03">>,<<"AES_256">>).
+%% {ok,[{<<"CiphertextBlob">>,
+%%      <<"CiAM3x4grcEaPbMDWyM2obIf+PN9fSGIb97Fr5dYbjV7pRKnAQEBAwB4DN8eIK3BGj2zA1sjNqGyH/jzfX0hiG/exa+XWG41"...>>},
+%%     {<<"KeyId">>,
+%%      <<"arn:aws:kms:us-east-1:399517187155:key/dcbb9a7f-9e69-49e3-a9cf-babf71954f03">>},
+%%     {<<"Plaintext">>,
+%%      <<"wpwtqGgs92XU3YSFdaAfxBOjd/6F2oM+bTfbDASrUiA=">>}]}
 %% '
 %%
 %% @end
 %%------------------------------------------------------------------------------
+-spec generate_data_key_without_plaintext/2 :: (string(), string()) -> proplist().
 
--spec get_shard_iterator/3 :: (string(), string(), string()) -> proplist().
+generate_data_key_without_plaintext(KeyId, KeySpec) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKeyWithoutPlaintext", Json).
 
-get_shard_iterator(StreamName, ShardId, ShardIteratorType) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardId">>, ShardId}, {<<"ShardIteratorType">>, ShardIteratorType}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.GetShardIterator", Json).
+-spec generate_data_key_without_plaintext/3 :: (string(), string(), string() | aws_config()) -> proplist().
 
--spec get_shard_iterator/4 :: (string(), string(), string(), string() | aws_config()) -> proplist().
+generate_data_key_without_plaintext(KeyId, KeySpec, Config) when is_record(Config, aws_config) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(Config, "TrentService.GenerateDataKeyWithoutPlaintext", Json);
+generate_data_key_without_plaintext(KeyId, KeySpec, ExplicitHashKey) ->
+   Json = [{<<"KeyId">>, KeyId},{<<"KeySpec">>, KeySpec},{<<"ExplicitHashKey">>, ExplicitHashKey}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKeyWithoutPlaintext", Json).
 
-get_shard_iterator(StreamName, ShardId, ShardIteratorType, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardId">>, ShardId}, {<<"ShardIteratorType">>, ShardIteratorType}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.GetShardIterator", Json);
-get_shard_iterator(StreamName, ShardId, ShardIteratorType, StartingSequenceNumber) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardId">>, ShardId}, {<<"ShardIteratorType">>, ShardIteratorType}, {<<"StartingSequenceNumber">>, StartingSequenceNumber}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.GetShardIterator", Json).
+-spec generate_data_key_without_plaintext/4 :: (string(), proplist(), list(), string() ) -> proplist().
 
--spec get_shard_iterator/5 :: (string(), string(), string(), string(), aws_config()) -> proplist().
+generate_data_key_without_plaintext(KeyId, EncryptionContext, GrantTokens, KeySpec) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"EncryptionContext">>, EncryptionContext}, {<<"GrantTokens">>, GrantTokens}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(default_config(), "TrentService.GenerateDataKeyWithoutPlaintext", Json).
 
-get_shard_iterator(StreamName, ShardId, ShardIteratorType, StartingSequenceNumber, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardId">>, ShardId}, {<<"ShardIteratorType">>, ShardIteratorType}, {<<"StartingSequenceNumber">>, StartingSequenceNumber}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.GetShardIterator", Json).
+-spec generate_data_key_without_plaintext/5 :: (string(), proplist(), list(), string(), aws_config() ) -> proplist().
 
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_GetRecords.html]
-%%
-%% ===Example===
-%%
-%% This operation returns one or more data records from a shard. A GetRecords operation request can retrieve up to 10 MB of data.
-%%
-%% `
-%% {ok, [{_, A2}]} = erlcloud_kms:get_shard_terator(<<"test">>, <<"shardId-000000000000">>, <<"TRIM_HORIZON">>).
-%% {ok,[{<<"ShardIterator">>,
-%%      <<"AAAAAAAAAAEuncwaAk+GTC2TIdmdg5w6dIuZ4Scu6vaMGPtaPUfopvw9cBm2NM3Rlj9WyI5JFJr2ahuSh3Z187AdW4Lug86E"...>>}]}
-%% erlcloud_kms:get_records(A2).
-%%  {ok,[{<<"NextShardIterator">>,
-%%      <<"AAAAAAAAAAEkuCmrC+QDW1gUywyu7G8GxvRyM6GSMkcHQ9wrvCJBW87mjn9C8YEckkipaoJySwgKXMmn1BwSPjnjiUCsu6pc"...>>},
-%%    {<<"Records">>,
-%%      [[{<<"Data">>,<<"asdasd">>},
-%%        {<<"PartitionKey">>,<<"key">>},
-%%        {<<"SequenceNumber">>,
-%%         <<"49537292605574028653758531131893428543501381406818304001">>}],
-%%       [{<<"Data">>,<<"asdasd 213123123">>},
-%%        {<<"PartitionKey">>,<<"key">>},
-%%        {<<"SequenceNumber">>,
-%%         <<"49537292605574028653758541428570459745183078607853977601">>}]]}]}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec get_records/1 :: (string()) -> proplist().
-
-get_records(ShardIterator) ->
-  Json = [{<<"ShardIterator">>, ShardIterator}],
-  get_normalized_records(default_config(), Json).
-
--spec get_records/2 :: (string(), 1..100 | aws_config()) -> proplist().
-
-get_records(ShardIterator, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"ShardIterator">>, ShardIterator}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.GetRecords", Json);
-get_records(ShardIterator, Limit) when is_integer(Limit), Limit > 0, Limit =< 100 ->
-  Json = [{<<"ShardIterator">>, ShardIterator}, {<<"Limit">>, Limit}],
-  get_normalized_records(default_config(), Json).
-
--spec get_records/3 :: (string(), 1..100, aws_config()) -> proplist().
-
-get_records(ShardIterator, Limit, Config) when is_record(Config, aws_config), is_integer(Limit), Limit > 0, Limit =< 100 ->
-  Json = [{<<"ShardIterator">>, ShardIterator}, {<<"Limit">>, Limit}],
-  get_normalized_records(Config, Json).
-
-%% Normalize records from kms
-
-get_normalized_records(Config, Json) when is_record(Config, aws_config) ->
-  case erlcloud_kms_impl:request(Config, "kms_20131202.GetRecords", Json) of
-    {ok, Response} -> {ok, normalize_response(Response)};
-    {error, Msg} -> {error, Msg}
-  end.
-
-
-normalize_record([{K,V} | T]) when K == <<"Data">> -> [ {K, base64:decode(V)} | normalize_record(T) ];
-normalize_record([K | T]) -> [K | normalize_record(T) ];
-normalize_record([]) -> [].
-
-normalize_records([K | V]) -> [ normalize_record(K) | normalize_records(V) ];
-normalize_records([]) -> [].
-
-normalize_response([{K,V} | T]) when K == <<"Records">> -> [ {K, normalize_records(V)} | normalize_response(T)];
-normalize_response([K | T]) -> [K | normalize_response(T)];
-normalize_response([]) -> [].
-
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_PutRecord.html]
-%%
-%% ===Example===
-%%
-%% This operation puts a data record into an Amazon kms stream from a producer.
-%%
-%% `
-%% erlcloud_kms:put_record(<<"test">>, <<"key">>, <<"asdasd">>).
-%% {ok,[{<<"SequenceNumber">>,
-%%    <<"49537292605574028653758531131893428543501381406818304001">>},
-%%    {<<"ShardId">>,<<"shardId-000000000000">>}]}
-%% erlcloud_kms:put_record(<<"test">>, <<"key">>, <<"asdasd 213123123">>).
-%% {ok,[{<<"SequenceNumber">>,
-%%    <<"49537292605574028653758541428570459745183078607853977601">>},
-%%    {<<"ShardId">>,<<"shardId-000000000000">>}]}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec put_record/3 :: (string(), string(), string()) -> proplist().
-
-put_record(StreamName, PartitionKey, Data) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.PutRecord", Json).
-
--spec put_record/4 :: (string(), string(), string(), string() | aws_config()) -> proplist().
-
-put_record(StreamName, PartitionKey, Data, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.PutRecord", Json);
-put_record(StreamName, PartitionKey, Data, ExplicitHashKey) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}, {<<"ExplicitHashKey">>, ExplicitHashKey}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.PutRecord", Json).
-
--spec put_record/5 :: (string(), string(), string(), string(), string() | aws_config()) -> proplist().
-
-put_record(StreamName, PartitionKey, Data, ExplicitHashKey, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}, {<<"ExplicitHashKey">>, ExplicitHashKey}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.PutRecord", Json);
-put_record(StreamName, PartitionKey, Data, ExplicitHashKey, Ordering) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}, {<<"ExplicitHashKey">>, ExplicitHashKey}, {<<"SequenceNumberForOrdering">>, Ordering}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.PutRecord", Json).
-
--spec put_record/6 :: (string(), string(), string(), string(), string(), aws_config()) -> proplist().
-
-put_record(StreamName, PartitionKey, Data, ExplicitHashKey, Ordering, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"PartitionKey">>, PartitionKey}, {<<"Data">>, base64:encode(Data)}, {<<"ExplicitHashKey">>, ExplicitHashKey}, {<<"SequenceNumberForOrdering">>, Ordering}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.PutRecord", Json).
-
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_MergeShards.html]
-%%
-%% ===Example===
-%%
-%% This operation merges two adjacent shards in a stream and combines them into a single shard to reduce the stream's capacity to ingest and transport data. Two shards are considered adjacent if the union of the hash key ranges for the two shards form a contiguous set with no gaps.
-%%
-%% `
-%% erlcloud_kms:merge_shards(<<"test">>, <<"shardId-000000000001">>, <<"shardId-000000000003">>).
-%% {ok,{incomplete,#Fun<jsx_decoder.1.688044>}}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec merge_shards/3 :: (string(), string(), string()) -> proplist().
-
-merge_shards(StreamName, AdjacentShardToMerge, ShardToMerge) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"AdjacentShardToMerge">>, AdjacentShardToMerge}, {<<"ShardToMerge">>, ShardToMerge}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.MergeShards", Json).
-
--spec merge_shards/4 :: (string(), string(), string(), aws_config()) -> proplist().
-
-merge_shards(StreamName, AdjacentShardToMerge, ShardToMerge, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"AdjacentShardToMerge">>, AdjacentShardToMerge}, {<<"ShardToMerge">>, ShardToMerge}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.MergeShards", Json).
-
-%%------------------------------------------------------------------------------
-%% @doc
-%% kms API:
-%% [http://docs.aws.amazon.com/kms/latest/APIReference/API_SplitShard.html]
-%%
-%% ===Example===
-%%
-%% This operation splits a shard into two new shards in the stream, to increase the stream's capacity to ingest and transport data.
-%%
-%% `
-%%  erlcloud_kms:split_shards(<<"test">>, <<"shardId-000000000000">>, <<"10">>).
-%%  {ok,{incomplete,#Fun<jsx_decoder.1.688044>}}
-%% '
-%%
-%% @end
-%%------------------------------------------------------------------------------
-
--spec split_shards/3 :: (string(), string(), string()) -> proplist().
-
-split_shards(StreamName, ShardToSplit, NewStartingHashKey) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardToSplit">>, ShardToSplit}, {<<"NewStartingHashKey">>, NewStartingHashKey}],
-  erlcloud_kms_impl:request(default_config(), "kms_20131202.SplitShard", Json).
-
--spec split_shards/4 :: (string(), string(), string(), aws_config()) -> proplist().
-
-split_shards(StreamName, ShardToSplit, NewStartingHashKey, Config) when is_record(Config, aws_config) ->
-  Json = [{<<"StreamName">>, StreamName}, {<<"ShardToSplit">>, ShardToSplit}, {<<"NewStartingHashKey">>, NewStartingHashKey}],
-  erlcloud_kms_impl:request(Config, "kms_20131202.SplitShard", Json).
+generate_data_key_without_plaintext(KeyId, EncryptionContext, GrantTokens, KeySpec, Config) when is_record(Config, aws_config) ->
+   Json = [{<<"KeyId">>, KeyId}, {<<"EncryptionContext">>, EncryptionContext}, {<<"GrantTokens">>, GrantTokens}, {<<"KeySpec">>, KeySpec}],
+   erlcloud_kms_impl:request(Config, "TrentService.GenerateDataKeyWithoutPlaintext", Json).
