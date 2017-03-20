@@ -1,13 +1,14 @@
 -module(erlcloud_aws_tests).
-
--include_lib("erlcloud/include/erlcloud_aws.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include("erlcloud.hrl").
+-include("erlcloud_aws.hrl").
 
 request_test_() ->
     {foreach,
      fun start/0,
      fun stop/1,
      [fun request_default_test/1,
+      fun request_retry_test/1,
       fun request_prot_host_port_str_test/1,
       fun request_prot_host_port_int_test/1,
       fun get_service_status_test/1]}.
@@ -20,10 +21,47 @@ start() ->
 stop(_) ->
     meck:unload(erlcloud_httpc).
 
+config() ->
+    #aws_config{access_key_id = "id",
+                secret_access_key = "key",
+                retry = fun erlcloud_retry:default_retry/1,
+                retry_num = 3}.
+
 request_default_test(_) ->
     ok = erlcloud_aws:aws_request(get, "host", "/", [], "id", "key"),
     Url = get_url_from_history(meck:history(erlcloud_httpc)),
     test_url(https, "host", 443, "/", Url).
+
+request_retry_test(_) ->
+    Response400 = {ok, {{400, "Bad Request"}, [],
+        <<"<ErrorResponse xmlns=\"http://elasticloadbalancing.amazonaws.com/doc/2012-06-01/\">\n"
+          "  <Error>\n"
+          "    <Type>Sender</Type>\n"
+          "    <Code>Throttling</Code>\n"
+          "    <Message>Rate exceeded</Message>\n"
+          "  </Error>\n"
+          "  <RequestId>d4af1389-87fc-11e5-b540-37851aabdff0</RequestId>\n"
+          "</ErrorResponse>\n">>}},
+    Response500 = {ok, {{500, "Internal Server Error"}, [],
+        <<"<?xml version=\"1.0\"?><ErrorResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">"
+            "<Error>"
+                "<Type>Receiver</Type>"
+                "<Code>InternalError</Code>"
+                "<Message>We encountered an internal error. Please try again.</Message>"
+                "<Detail/>"
+            "</Error>
+          <RequestId>87503803-73c7-5e4d-8619-76be476a7915</RequestId></ErrorResponse>">>}},
+    Response200 = {ok, {{200, "OK"}, [], <<"OkBody">>}},
+    meck:sequence(erlcloud_httpc, request, 6, [Response400, Response200]),
+    <<"OkBody">> = erlcloud_aws:aws_request(get, "host", "/", [], config()),
+
+    meck:sequence(erlcloud_httpc, request, 6, [Response400, Response500, Response200]),
+    <<"OkBody">> = erlcloud_aws:aws_request(get, "host", "/", [], config()),
+
+    
+    meck:sequence(erlcloud_httpc, request, 6, [Response400, Response500, Response400, Response200]),
+    Result3 = erlcloud_aws:aws_request_xml4(get, "host", "/", [], "any", config()),
+    ?_assertMatch({error, {http_error, 400, "Bad Request", _ErrorMsg}}, Result3).
 
 request_prot_host_port_str_test(_) ->
     ok = erlcloud_aws:aws_request(get, "http", "host1", "9999", "/path1", [], "id", "key"),
@@ -120,13 +158,21 @@ test_url(ExpScheme, ExpHost, ExpPort, ExpPath, Url) ->
      ?_assertEqual(ExpPath, Path)].
 
 
+-define(DEFAULT_ACCESS_ID, "XXXXXXXXXXXXXXXXXXX2").
+-define(DEFAULT_ACCESS_KEY, "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy2").
+-define(BAR_ACCESS_ID, "XXXXXXXXXXXXXXXXXXX1").
+-define(BAR_ACCESS_KEY, "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy1").
+-define(BAZ_ACCESS_ID, "XXXXXXXXXXXXXXXXXXX3").
+-define(BAZ_ACCESS_KEY, "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy3").
+
+
 profile_default_test_() ->
     {setup, fun profiles_test_setup/0, fun profiles_test_cleanup/1,
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX2",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy2" }},
+            access_key_id = ?DEFAULT_ACCESS_ID,
+            secret_access_key = ?DEFAULT_ACCESS_KEY }},
            erlcloud_aws:profile() )
        )
     }.
@@ -137,8 +183,8 @@ profile_direct_test_() ->
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX1",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy1" }},
+            access_key_id = ?BAR_ACCESS_ID,
+            secret_access_key = ?BAR_ACCESS_KEY }},
            erlcloud_aws:profile( bar ) )
        )
     }.
@@ -148,8 +194,8 @@ profile_indirect_test_() ->
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX1",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy1" }},
+            access_key_id = ?BAR_ACCESS_ID,
+            secret_access_key = ?BAR_ACCESS_KEY }},
            erlcloud_aws:profile( blah ) )
        )
     }.
@@ -159,8 +205,8 @@ profile_indirect_role_test_() ->
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX3",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy3",
+            access_key_id = ?BAZ_ACCESS_ID,
+            secret_access_key = ?BAZ_ACCESS_KEY,
             security_token = "WHOOOOOOOO:12345" }},
            erlcloud_aws:profile( flooga ) )
        )
@@ -173,8 +219,8 @@ profile_indirect_role_options_test_() ->
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX3",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy3",
+            access_key_id = ?BAZ_ACCESS_ID,
+            secret_access_key = ?BAZ_ACCESS_KEY,
             security_token = "WHOOOOOOOO:54321" }},
            erlcloud_aws:profile( flooga, Options ) )
        )
@@ -188,10 +234,34 @@ profile_indirect_role_options_external_id_test_() ->
      ?_test(
         ?assertMatch(
            {ok, #aws_config{
-            access_key_id = "XXXXXXXXXXXXXXXXXXX3",
-            secret_access_key = "yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy3",
+            access_key_id = ?BAZ_ACCESS_ID,
+            secret_access_key = ?BAZ_ACCESS_KEY,
             security_token = "WHOOOOOOOO:54321" }},
            erlcloud_aws:profile( flooga, Options ) )
+       )
+    }.
+
+profile_external_id_role_test_() ->
+    {setup, fun profiles_assume_setup/0, fun profiles_assume_cleanup/1,
+     ?_test(
+        ?assertMatch(
+           {ok, #aws_config{
+            access_key_id = ?BAZ_ACCESS_ID,
+            secret_access_key = ?BAZ_ACCESS_KEY,
+            security_token = "WHOOOOOOOO:12345:12349321" }},
+           erlcloud_aws:profile( eid ) )
+       )
+    }.
+
+profile_double_external_id_role_test_() ->
+    {setup, fun profiles_assume_setup/0, fun profiles_assume_cleanup/1,
+     ?_test(
+        ?assertMatch(
+           {ok, #aws_config{
+            access_key_id = ?BAZ_ACCESS_ID,
+            secret_access_key = ?BAZ_ACCESS_KEY,
+            security_token = "WHOOOOOOOO:12345:fubar" }},
+           erlcloud_aws:profile( eidrecurse ) )
        )
     }.
 
@@ -215,22 +285,25 @@ profiles_test_setup() ->
 [bar]
 aws_access_key_id = XXXXXXXXXXXXXXXXXXX1
 aws_secret_access_key = yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy1
-
 [baz]
 aws_access_key_id = XXXXXXXXXXXXXXXXXXX3
 aws_secret_access_key = yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy3
-
 [flooga]
 role_arn=arn:aws:iam::892406118791:role/centralized-users
 source_profile=baz
-
+[eid]
+role_arn=arn:aws:iam::100406118791:role/centralized-users
+external_id=12349321
+source_profile=baz
+[eidrecurse]
+role_arn=arn:aws:iam::000406118791:role/centralized-users
+external_id=fubar
+source_profile=eid
 [default]
 aws_access_key_id = XXXXXXXXXXXXXXXXXXX2
 aws_secret_access_key = yyyyyyyyyyyyyyyyyyyyyyyyyy+yyyy/yyyyyyyy2
-
 [blah]
 source_profile=bar
-
 [whoa]
 source_profile=cowboy
 ">>,
@@ -244,7 +317,7 @@ profiles_assume_setup() ->
     profiles_test_setup(),
     meck:new( erlcloud_sts ),
     meck:expect( erlcloud_sts, assume_role,
-                 fun( Config, _, "erlcloud", 900, _ ) ->
+                 fun( Config, _, _, 900, undefined ) ->
                       {Config#aws_config{ security_token = "WHOOOOOOOO:12345" },
                        []};
                     ( Config, _, "wonder", 3600, _ ) ->
@@ -252,7 +325,10 @@ profiles_assume_setup() ->
                        []};
                     ( Config, _, "external", 3600, "HOOPDIE" ) ->
                       {Config#aws_config{ security_token = "WHOOOOOOOO:99999" },
-                       []}
+                       []};
+                    ( Config, _, _, _, ExtId ) ->
+                         Token = "WHOOOOOOOO:12345:" ++ ExtId,
+                         {Config#aws_config{ security_token = Token }, []}
                  end ).
 
 profiles_assume_cleanup(P) ->
@@ -438,6 +514,40 @@ service_config_elasticloadbalancing_test() ->
                             [erlcloud_aws:service_config(
                                ServiceAlt, Region, #aws_config{} )
                              || Region <- Regions]] ).
+
+% current as of 2017-01-27, list from
+% http://docs.aws.amazon.com/general/latest/gr/rande.html#emr_region
+service_config_elasticmapreduce_test() ->
+    Service = <<"elasticmapreduce">>,
+    ServiceAlt = <<"emr">>,
+    Regions = [<<"us-east-1">>, <<"us-east-2">>, <<"us-west-1">>, <<"us-west-2">>,
+               <<"ca-central-1">>, <<"eu-west-1">>, <<"eu-central-1">>,
+               <<"ap-northeast-1">>, <<"ap-northeast-2">>,
+               <<"ap-southeast-1">>, <<"ap-southeast-2">>,
+               <<"sa-east-1">>],
+    Expected = ["elasticmapreduce.us-east-1.amazonaws.com",
+                "elasticmapreduce.us-east-2.amazonaws.com",
+                "elasticmapreduce.us-west-1.amazonaws.com",
+                "elasticmapreduce.us-west-2.amazonaws.com",
+                "elasticmapreduce.ca-central-1.amazonaws.com",
+                "elasticmapreduce.eu-west-1.amazonaws.com",
+                "elasticmapreduce.eu-central-1.amazonaws.com",
+                "elasticmapreduce.ap-northeast-1.amazonaws.com",
+                "elasticmapreduce.ap-northeast-2.amazonaws.com",
+                "elasticmapreduce.ap-southeast-1.amazonaws.com",
+                "elasticmapreduce.ap-southeast-2.amazonaws.com",
+                "elasticmapreduce.sa-east-1.amazonaws.com"],
+    ?assertEqual( Expected,
+                  [H || #aws_config{ emr_host = H } <-
+                            [erlcloud_aws:service_config(
+                               Service, Region, #aws_config{} )
+                             || Region <- Regions]] ),
+    ?assertEqual( Expected,
+                  [H || #aws_config{ emr_host = H } <-
+                            [erlcloud_aws:service_config(
+                               ServiceAlt, Region, #aws_config{} )
+                             || Region <- Regions]] ).
+
 
 service_config_iam_test() ->
     Service = <<"iam">>,
@@ -683,4 +793,3 @@ service_config_waf_test() ->
                             [erlcloud_aws:service_config(
                                Service, Region, #aws_config{} )
                              || Region <- Regions]] ).
-

@@ -206,9 +206,9 @@ input_exception_test_() ->
 error_handling_tests(_) ->
     OkResponse = httpc_response(200, "
 {\"Item\":
-	{\"friends\":{\"SS\":[\"Lynda\", \"Aaron\"]},
-	 \"status\":{\"S\":\"online\"}
-	},
+    {\"friends\":{\"SS\":[\"Lynda\", \"Aaron\"]},
+     \"status\":{\"S\":\"online\"}
+    },
 \"ConsumedCapacityUnits\": 1
 }"                                   
                                   ),
@@ -2005,16 +2005,19 @@ get_item_output_tests(_) ->
          ?_ddb_test(
             {"GetItem test all attribute types", "
 {\"Item\":
-	{\"ss\":{\"SS\":[\"Lynda\", \"Aaron\"]},
-	 \"ns\":{\"NS\":[\"12\",\"13.0\",\"14.1\"]},
-	 \"bs\":{\"BS\":[\"BbY=\"]},
-	 \"es\":{\"SS\":[]},
-	 \"s\":{\"S\":\"Lynda\"},
-	 \"n\":{\"N\":\"12\"},
-	 \"f\":{\"N\":\"12.34\"},
-	 \"b\":{\"B\":\"BbY=\"},
-	 \"empty\":{\"S\":\"\"}
-	}
+    {\"ss\":{\"SS\":[\"Lynda\", \"Aaron\"]},
+     \"ns\":{\"NS\":[\"12\",\"13.0\",\"14.1\"]},
+     \"bs\":{\"BS\":[\"BbY=\"]},
+     \"es\":{\"SS\":[]},
+     \"s\":{\"S\":\"Lynda\"},
+     \"n\":{\"N\":\"12\"},
+     \"f\":{\"N\":\"12.34\"},
+     \"b\":{\"B\":\"BbY=\"},
+     \"l\":{\"L\":[{\"S\":\"Listen\"},{\"S\":\"Linda\"}]},
+     \"m\":{\"M\":{\"k\": {\"S\": \"v\"}}},
+     \"empty_string\":{\"S\":\"\"},
+     \"empty_map\":{\"M\":{}}
+    }
 }",
              {ok, #ddb2_get_item{
                      item = [{<<"ss">>, [<<"Lynda">>, <<"Aaron">>]},
@@ -2025,7 +2028,10 @@ get_item_output_tests(_) ->
                              {<<"n">>, 12},
                              {<<"f">>, 12.34},
                              {<<"b">>, <<5,182>>},
-                             {<<"empty">>, <<>>}],
+                             {<<"l">>, [<<"Listen">>, <<"Linda">>]},
+                             {<<"m">>, [{<<"k">>, <<"v">>}]},
+                             {<<"empty_string">>, <<>>},
+                             {<<"empty_map">>, []}],
                     consumed_capacity = undefined}}}),
          ?_ddb_test(
             {"GetItem item not found", 
@@ -2044,16 +2050,19 @@ get_item_output_typed_tests(_) ->
         [?_ddb_test(
             {"GetItem typed test all attribute types", "
 {\"Item\":
-	{\"ss\":{\"SS\":[\"Lynda\", \"Aaron\"]},
-	 \"ns\":{\"NS\":[\"12\",\"13.0\",\"14.1\"]},
-	 \"bs\":{\"BS\":[\"BbY=\"]},
-	 \"es\":{\"SS\":[]},
-	 \"s\":{\"S\":\"Lynda\"},
-	 \"n\":{\"N\":\"12\"},
-	 \"f\":{\"N\":\"12.34\"},
-	 \"b\":{\"B\":\"BbY=\"},
-	 \"empty\":{\"S\":\"\"}
-	}
+    {\"ss\":{\"SS\":[\"Lynda\", \"Aaron\"]},
+     \"ns\":{\"NS\":[\"12\",\"13.0\",\"14.1\"]},
+     \"bs\":{\"BS\":[\"BbY=\"]},
+     \"es\":{\"SS\":[]},
+     \"s\":{\"S\":\"Lynda\"},
+     \"n\":{\"N\":\"12\"},
+     \"f\":{\"N\":\"12.34\"},
+     \"b\":{\"B\":\"BbY=\"},
+     \"l\":{\"L\":[{\"S\":\"Listen\"},{\"S\":\"Linda\"}]},
+     \"m\":{\"M\":{\"k\": {\"S\": \"v\"}}},
+     \"empty_string\":{\"S\":\"\"},
+     \"empty_map\":{\"M\":{}}
+    }
 }",
              {ok, #ddb2_get_item{
                      item = [{<<"ss">>, {ss, [<<"Lynda">>, <<"Aaron">>]}},
@@ -2064,7 +2073,10 @@ get_item_output_typed_tests(_) ->
                              {<<"n">>, {n, 12}},
                              {<<"f">>, {n, 12.34}},
                              {<<"b">>, {b, <<5,182>>}},
-                             {<<"empty">>, {s, <<>>}}],
+                             {<<"l">>, {l, [{s, <<"Listen">>}, {s, <<"Linda">>}]}},
+                             {<<"m">>, {m, [{<<"k">>, {s, <<"v">>}}]}},
+                             {<<"empty_string">>, {s, <<>>}},
+                             {<<"empty_map">>, {m, []}}],
                     consumed_capacity = undefined}}})
         ],
     
@@ -2237,7 +2249,8 @@ put_item_input_tests(_) ->
                                         {<<"map_value">>, {m, [
                                             {<<"key1">>, "value1"},
                                             {<<"key2">>, {l, ["list_string1", "list_string2"]}}
-                                        ]}}
+                                        ]}},
+                                        {<<"empty_map_value">>, {m, []}}
                                        ])), "
 {
     \"TableName\": \"Table\",
@@ -2258,7 +2271,8 @@ put_item_input_tests(_) ->
                 {\"S\": \"list_string1\"},
                 {\"S\": \"list_string2\"}
             ]}
-        }}
+        }},
+        \"empty_map_value\": {\"M\": {}}
     }
 }"
             })
@@ -2349,7 +2363,8 @@ put_item_output_tests(_) ->
                 {\"S\": \"list_string1\"},
                 {\"S\": \"list_string2\"}
             ]}
-        }}
+        }},
+        \"empty_map_value\": {\"M\": {}}
     }
 }",
 
@@ -2361,7 +2376,8 @@ put_item_output_tests(_) ->
                                    {<<"map_value">>, [
                                        {<<"key1">>, <<"value1">>},
                                        {<<"key2">>, [<<"list_string1">>, <<"list_string2">>]}
-                                   ]}
+                                   ]},
+                                   {<<"empty_map_value">>, []}
                                   ]
                      }}})
         ],
@@ -2561,23 +2577,23 @@ q_output_tests(_) ->
     \"ScannedCount\": 3
 }",
              {ok, #ddb2_q{count = 3,
-                         items = [[{<<"LastPostedBy">>, <<"fred@example.com">>},
-                                   {<<"ForumName">>, <<"Amazon DynamoDB">>},
-                                   {<<"LastPostDateTime">>, <<"20130102054211">>},
-                                   {<<"Tags">>, [<<"Problem">>,<<"Question">>]}],
-                                  [{<<"LastPostedBy">>, <<"alice@example.com">>},
-                                   {<<"ForumName">>, <<"Amazon DynamoDB">>},
-                                   {<<"LastPostDateTime">>, <<"20130105111307">>},
-                                   {<<"Tags">>, [<<"Idea">>]}],
-                                  [{<<"LastPostedBy">>, <<"bob@example.com">>},
-                                   {<<"ForumName">>, <<"Amazon DynamoDB">>},
-                                   {<<"LastPostDateTime">>, <<"20130108094417">>},
-                                   {<<"Tags">>, [<<"AppDesign">>, <<"HelpMe">>]}]],
-                         consumed_capacity =
-                             #ddb2_consumed_capacity{
-                                capacity_units = 2,
-                                table_name = <<"Thread">>},
-		                 scanned_count = 3}}}),
+                          items = [[{<<"LastPostedBy">>, <<"fred@example.com">>},
+                                    {<<"ForumName">>, <<"Amazon DynamoDB">>},
+                                    {<<"LastPostDateTime">>, <<"20130102054211">>},
+                                    {<<"Tags">>, [<<"Problem">>,<<"Question">>]}],
+                                   [{<<"LastPostedBy">>, <<"alice@example.com">>},
+                                    {<<"ForumName">>, <<"Amazon DynamoDB">>},
+                                    {<<"LastPostDateTime">>, <<"20130105111307">>},
+                                    {<<"Tags">>, [<<"Idea">>]}],
+                                   [{<<"LastPostedBy">>, <<"bob@example.com">>},
+                                    {<<"ForumName">>, <<"Amazon DynamoDB">>},
+                                    {<<"LastPostDateTime">>, <<"20130108094417">>},
+                                    {<<"Tags">>, [<<"AppDesign">>, <<"HelpMe">>]}]],
+                          consumed_capacity =
+                              #ddb2_consumed_capacity{
+                                 capacity_units = 2,
+                                 table_name = <<"Thread">>},
+                          scanned_count = 3}}}),
          ?_ddb_test(
             {"Query example 2 response", "
 {
@@ -2676,6 +2692,38 @@ scan_input_tests(_) ->
     \"TableName\": \"Reply\",
     \"Segment\": 1,
     \"TotalSegments\": 2
+}"
+            }),
+         ?_ddb_test(
+            {"Index Scan",
+             ?_f(erlcloud_ddb2:scan(<<"Thread">>,
+                                    [{scan_filter, [{<<"ForumType">>, <<"Interests">>, eq},
+                                                    {<<"LastPostDateTime">>, {0, 201303201023}, between}]},
+                                     {index_name, <<"ForumTypeIdx">>}])), "
+{
+    \"TableName\": \"Thread\",
+    \"IndexName\": \"ForumTypeIdx\",
+    \"ScanFilter\": {
+        \"ForumType\": {
+            \"AttributeValueList\": [
+                {
+                    \"S\": \"Interests\"
+                }
+            ],
+            \"ComparisonOperator\": \"EQ\"
+        },
+        \"LastPostDateTime\": {
+            \"AttributeValueList\": [
+                {
+                    \"N\": \"0\"
+                },
+                {
+                    \"N\": \"201303201023\"
+                }
+            ],
+            \"ComparisonOperator\": \"BETWEEN\"
+        }
+    }
 }"
             }),
          ?_ddb_test(
@@ -3143,15 +3191,11 @@ update_item_output_tests(_) ->
 update_table_input_tests(_) ->
     Tests =
         [?_ddb_test(
-            {"UpdateTable example request",
-             ?_f(erlcloud_ddb2:update_table(<<"Thread">>, 10, 10, 
-                                            [{global_secondary_index_updates, [{<<"SubjectIdx">>, 30, 40}, {<<"AnotherIdx">>, 50, 60}]}])), "
+            {"UpdateTable example request: update provisioned throughput on table and global secondary index",
+             ?_f(erlcloud_ddb2:update_table(<<"Thread">>, 10, 10,
+                                            [{global_secondary_index_updates, [{<<"SubjectIdx">>, 30, 40}]}])), "
 {
     \"TableName\": \"Thread\",
-    \"ProvisionedThroughput\": {
-        \"ReadCapacityUnits\": 10,
-        \"WriteCapacityUnits\": 10
-    },
     \"GlobalSecondaryIndexUpdates\": [
         {
             \"Update\": {
@@ -3161,14 +3205,114 @@ update_table_input_tests(_) ->
                     \"WriteCapacityUnits\": 40
                 }
             }
+        }
+    ],
+    \"ProvisionedThroughput\": {
+        \"ReadCapacityUnits\": 10,
+        \"WriteCapacityUnits\": 10
+    }
+}"
+            }),
+         ?_ddb_test(
+            {"UpdateTable example request: create new global secondary index",
+             ?_f(erlcloud_ddb2:update_table(<<"Thread">>,
+                                            [{attribute_definitions, [{<<"ForumType">>, s}]},
+                                             {provisioned_throughput, {10, 10}},
+                                             {global_secondary_index_updates, [{<<"ForumTypeIdx">>, {<<"ForumType">>, <<"LastPostDateTime">>}, keys_only, 60, 90}]}])), "
+{
+    \"TableName\": \"Thread\",
+    \"AttributeDefinitions\": [
+        {
+            \"AttributeName\": \"ForumType\",
+            \"AttributeType\": \"S\"
+        }
+    ],
+    \"GlobalSecondaryIndexUpdates\": [
+        {
+            \"Create\": {
+                \"IndexName\": \"ForumTypeIdx\",
+                \"KeySchema\": [
+                    {
+                        \"AttributeName\": \"ForumType\",
+                        \"KeyType\": \"HASH\"
+                    },
+                    {
+                        \"AttributeName\": \"LastPostDateTime\",
+                        \"KeyType\": \"RANGE\"
+                    }
+                ],
+                \"Projection\": {
+                    \"ProjectionType\": \"KEYS_ONLY\"
+                },
+                \"ProvisionedThroughput\": {
+                    \"ReadCapacityUnits\": 60,
+                    \"WriteCapacityUnits\": 90
+                }
+            }
+        }
+    ],
+    \"ProvisionedThroughput\": {
+        \"ReadCapacityUnits\": 10,
+        \"WriteCapacityUnits\": 10
+    }
+}"
+            }),
+         ?_ddb_test(
+            {"UpdateTable example request: delete global secondary index",
+             ?_f(erlcloud_ddb2:update_table(<<"Thread">>,
+                                            [{global_secondary_index_updates, [{<<"ForumTypeIdx">>, delete}]}])), "
+{
+    \"TableName\": \"Thread\",
+    \"GlobalSecondaryIndexUpdates\": [
+        {
+            \"Delete\": {
+                \"IndexName\": \"ForumTypeIdx\"
+            }
+        }
+    ]
+}"
+            }),
+        ?_ddb_test(
+            {"UpdateTable example request with Create and Delete GSI",
+             ?_f(erlcloud_ddb2:update_table(<<"Thread">>, 10, 10,
+                                            [{attribute_definitions, [{<<"HashKey1">>, s}]},
+                                             {global_secondary_index_updates, [
+                                                {<<"Index1">>, <<"HashKey1">>, all, 30, 40},
+                                                {<<"Index2">>, delete}]}])), "
+{
+    \"TableName\": \"Thread\",
+    \"ProvisionedThroughput\": {
+        \"ReadCapacityUnits\": 10,
+        \"WriteCapacityUnits\": 10
+    },
+    \"AttributeDefinitions\": [
+        {
+            \"AttributeName\": \"HashKey1\",
+            \"AttributeType\": \"S\"
+        }
+    ],
+    \"GlobalSecondaryIndexUpdates\": [
+        {
+            \"Create\": {
+                \"IndexName\": \"Index1\",
+                \"KeySchema\": [
+                    {
+                        \"AttributeName\": \"HashKey1\",
+                        \"KeyType\": \"HASH\"
+                    }
+                ],
+                \"Projection\": {
+                    \"ProjectionType\": \"ALL\"
+                },
+                \"ProvisionedThroughput\": {
+                    \"ReadCapacityUnits\": 30,
+                    \"WriteCapacityUnits\": 40
+                }
+            }
         },
         {
-            \"Update\": {
-                \"IndexName\": \"AnotherIdx\",
-                \"ProvisionedThroughput\": {
-                    \"ReadCapacityUnits\": 50,
-                    \"WriteCapacityUnits\": 60
-                }
+            \"Delete\": {
+                \"IndexName\": \"Index2\"
             }
         }
     ]

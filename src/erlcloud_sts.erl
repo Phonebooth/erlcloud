@@ -1,14 +1,15 @@
 %% -*- mode: erlang;erlang-indent-level: 4;indent-tabs-mode: nil -*-
 -module(erlcloud_sts).
 
--include_lib("erlcloud/include/erlcloud.hrl").
--include_lib("erlcloud/include/erlcloud_aws.hrl").
+-include("erlcloud.hrl").
+-include("erlcloud_aws.hrl").
 
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 -endif.
 
 -export([assume_role/4, assume_role/5,
+         get_caller_identity/1,
          get_federation_token/3,
          get_federation_token/4]).
 
@@ -21,7 +22,7 @@ assume_role(AwsConfig, RoleArn, RoleSessionName, DurationSeconds) ->
 
 
 % See http://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html
--spec assume_role/5 :: (#aws_config{}, string(), string(), 900..3600, undefined | string()) -> {#aws_config{}, proplist()}.
+-spec assume_role(#aws_config{}, string(), string(), 900..3600, undefined | string()) -> {#aws_config{}, proplist()}.
 assume_role(AwsConfig, RoleArn, RoleSessionName, DurationSeconds, ExternalId)
     when length(RoleArn) >= 20,
          length(RoleSessionName) >= 2, length(RoleSessionName) =< 32,
@@ -61,11 +62,30 @@ assume_role(AwsConfig, RoleArn, RoleSessionName, DurationSeconds, ExternalId)
     {AssumedConfig, Creds}.
 
 
+
+%% @doc Retrieve identity information
+%%
+%% @see http://docs.aws.amazon.com/STS/latest/APIReference/API_GetCallerIdentity.html
+-type caller_identity_prop() :: {account, string()}
+                              | {arn, string()}
+                              | {userId, string()}.
+-spec get_caller_identity(#aws_config{}) -> {ok, [caller_identity_prop()]}.
+get_caller_identity(AwsConfig) ->
+    Xml = sts_query(AwsConfig, "GetCallerIdentity", []),
+    Proplists = erlcloud_xml:decode(
+        [
+         {account, "GetCallerIdentityResult/Account", text},
+         {arn, "GetCallerIdentityResult/Arn", text},
+         {userId, "GetCallerIdentityResult/UserId", text}
+        ], Xml),
+    {ok, Proplists}.
+
+
 get_federation_token(AwsConfig, DurationSeconds, Name) ->
         get_federation_token(AwsConfig, DurationSeconds, Name, undefined).
 
 % See http://docs.aws.amazon.com/STS/latest/APIReference/API_GetFederationToken.html
--spec get_federation_token/4 :: (#aws_config{}, 900..129600, string(), undefined | string()) -> {#aws_config{}, proplist()}.
+-spec get_federation_token(#aws_config{}, 900..129600, string(), undefined | string()) -> {#aws_config{}, proplist()}.
 get_federation_token(AwsConfig, DurationSeconds, Name, Policy)
   when length(Name) >= 2, length(Name) =< 32,
        DurationSeconds >= 900, DurationSeconds =< 129600 ->
@@ -88,7 +108,7 @@ get_federation_token(AwsConfig, DurationSeconds, Name, Policy)
                {access_key_id       , "GetFederationTokenResult/Credentials/AccessKeyId", text},
                {secret_access_key   , "GetFederationTokenResult/Credentials/SecretAccessKey", text},
                {session_token       , "GetFederationTokenResult/Credentials/SessionToken"   , text},
-               {expiration          , "GetFederationTokenResult/Credentials/Expiration", text},
+               {expiration          , "GetFederationTokenResult/Credentials/Expiration", time},
                {federated_user_arn  , "GetFederationTokenResult/FederatedUser/Arn", text},
                {federated_user_id   , "GetFederationTokenResult/FederatedUser/FederatedUserId", text}
               ],
@@ -109,21 +129,25 @@ sts_query(AwsConfig, Action, Params) ->
 
 
 sts_query(AwsConfig, Action, Params, ApiVersion) ->
-    erlcloud_aws:aws_request_xml(post,
+    case erlcloud_aws:aws_request_xml4(post,
         AwsConfig#aws_config.sts_host,
         "/",
         [{"Action", Action}, {"Version", ApiVersion} | Params],
-        AwsConfig
-    ).
+        "sts", AwsConfig)
+    of
+        {ok, Body} ->
+            Body;
+        {error, Reason} ->
+            erlang:error({aws_error, Reason})
+    end.
 
-
+expiration_tosecs( Datetime ) when is_tuple(Datetime) ->
+    GregorianSeconds = calendar:datetime_to_gregorian_seconds( Datetime ),
+    (GregorianSeconds - ?UTC_TO_GREGORIAN);
 expiration_tosecs( Timestamp ) ->
     {ok, [Year,Month,Day,Hour,Min,Sec,_Ms],[]} =
         io_lib:fread( "~4d-~2d-~2dT~2d:~2d:~2d.~3dZ", Timestamp ),
-    GregorianSeconds = calendar:datetime_to_gregorian_seconds(
-                         {{Year,Month,Day},{Hour,Min,Sec}} ),
-    (GregorianSeconds - ?UTC_TO_GREGORIAN).
-
+    expiration_tosecs( {{Year,Month,Day},{Hour,Min,Sec}} ).
     
 
 -ifdef(TEST).
@@ -134,13 +158,3 @@ expiration_tosecs_test() ->
 
 
 -endif.
-
-
-
-
-
-
-
-
-
-

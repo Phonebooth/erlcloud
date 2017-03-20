@@ -42,7 +42,7 @@
 %% retry(Error) ->
 %%     RequestId = erlcloud_ddb_impl:request_id_from_error(Error),
 %%     {_, Operation} = lists:keyfind("x-amz-target", 1, Error#ddb2_error.request_headers),
-%%     lager:notice("DDB Attempt: ~p Reason: ~p RequestId: ~p, Request: ~p ~p", 
+%%     lager:notice("DDB Attempt: ~p Reason: ~p RequestId: ~p, Request: ~p ~p",
 %%                  [Error#ddb2_error.attempt,
 %%                   Error#ddb2_error.reason,
 %%                   RequestId,
@@ -107,7 +107,7 @@ request(Config0, Operation, Json) ->
 -spec backoff(pos_integer()) -> ok.
 backoff(1) -> ok;
 backoff(Attempt) ->
-    timer:sleep(random:uniform((1 bsl (Attempt - 1)) * 100)).
+    timer:sleep(erlcloud_util:rand_uniform((1 bsl (Attempt - 1)) * 100)).
 
 %% HTTPC timeout for a request
 timeout(1, #aws_config{timeout = undefined}) ->

@@ -13,6 +13,8 @@
                   xmerl,
                   inets,
                   jsx,
+                  eini,
+                  base16,
                   %% hackney,
                   lhttpc]},
   {modules, []},

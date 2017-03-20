@@ -15,21 +15,21 @@
 -export([configure/2, configure/3, new/2, new/3]).
 
 -export([
-         list_metrics/4,
-         put_metric_data/2,
-         put_metric_data/5,
-         get_metric_statistics/8,
+         list_metrics/5, list_metrics/4,
+         put_metric_data/3, put_metric_data/2,
+         put_metric_data/6, put_metric_data/5,
+         get_metric_statistics/4, get_metric_statistics/9, get_metric_statistics/8,
          configure_host/3,
          test/0,
          test2/0
         ]).
 
--include_lib("erlcloud/include/erlcloud.hrl").
--include_lib("erlcloud/include/erlcloud_aws.hrl").
--include_lib("erlcloud/include/erlcloud_mon.hrl").
+-include("erlcloud.hrl").
+-include("erlcloud_aws.hrl").
+-include("erlcloud_mon.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
--import(erlcloud_xml, [get_text/2]).
+-import(erlcloud_xml, [get_text/2, get_time/2]).
 
 -define(XMLNS_MON, "http://monitoring.amazonaws.com/doc/2010-08-01/").
 -define(API_VERSION, "2010-08-01").
@@ -62,8 +62,24 @@ list_metrics(
   DimensionFilter,
   NextToken
  ) ->
+    list_metrics(Namespace, MetricName, DimensionFilter, NextToken, default_config()).
 
-    Config = default_config(),
+-spec list_metrics(
+        Namespace       ::string(),
+        MetricName      ::string(),
+        DimensionFilter ::[{string(),string()}],
+        NextToken       ::string(),
+        Config          ::aws_config()
+                          ) -> term().
+
+list_metrics(
+  Namespace,
+  MetricName,
+  DimensionFilter,
+  NextToken,
+  #aws_config{} = Config
+ ) ->
+
     Params =
         [{"Namespace",  Namespace}  || Namespace/=""]
         ++
@@ -126,7 +142,16 @@ extract_dimension(Node) ->
                       ) -> term().
 
 put_metric_data(Namespace, MetricData) ->
-    Config = default_config(),
+    put_metric_data(Namespace, MetricData, default_config()).
+
+-spec put_metric_data(
+        Namespace   ::string(),
+        MetricData  ::[metric_datum()],
+        Config      ::aws_config()
+                      ) -> term().
+
+put_metric_data(Namespace, MetricData, #aws_config{} = Config) ->
+
     Params =
         [
          {"Namespace", Namespace} |
@@ -203,7 +228,18 @@ params_stat(Prefix, StatisticValues) ->
                       ) -> term().
 
 put_metric_data(Namespace, MetricName, Value, Unit, Timestamp) ->
-    Config = default_config(),
+    put_metric_data(Namespace, MetricName, Value, Unit, Timestamp, default_config()).
+
+-spec put_metric_data(
+        Namespace   ::string(),
+        MetricName  ::string(),
+        Value       ::string(),
+        Unit        ::unit(),
+        Timestamp   ::datetime()|string(),
+        Config      ::aws_config()
+                      ) -> term().
+
+put_metric_data(Namespace, MetricName, Value, Unit, Timestamp, #aws_config{} = Config) ->
     Params =
         lists:flatten(
           [
@@ -216,11 +252,86 @@ put_metric_data(Namespace, MetricName, Value, Unit, Timestamp) ->
          ),
     mon_simple_query(Config, "PutMetricData", Params).
 
+
+%%------------------------------------------------------------------------------
+%% @doc CloudWatch API - GetMetricStatistics - Easy average version
+%% Gets average and max stats at 60 second intervals for 
+%% the given metric on the given instance for the given interval
+%% @end
+%%------------------------------------------------------------------------------
+-spec get_metric_statistics(
+        MetricName  ::string(),
+        StartTime   ::datetime() | string(),
+        EndTime     ::datetime() | string(),
+        InstanceId  ::string()
+       ) -> term().
+
+get_metric_statistics(
+  MetricName,
+  StartTime,
+  EndTime,
+  InstanceId) ->
+          get_metric_statistics(
+              "AWS/EC2",
+              MetricName,
+              StartTime,
+              EndTime,
+              60,
+              "",
+              ["Average","Maximum"],
+              [{"InstanceId", InstanceId}]).
+
 %%------------------------------------------------------------------------------
 %% @doc CloudWatch API - GetMetricStatistics
 %% [http://docs.amazonwebservices.com/AmazonCloudWatch/latest/APIReference/index.html?API_GetMetricStatistics.html]
-%% @end
+%%
+%% USAGE:
+%%
+%%  erlcloud_mon:get_metric_statistics(
+%%    "AWS/EC2",
+%%    "CPUUtilization",
+%%    {{2016, 06, 29}, {0, 0, 0}},
+%%    "2016-06-29T00:30:00Z",
+%%    60,
+%%    "Percent",
+%%    ["Average", "Maximum"],
+%%    [{"InstanceType", "t2.micro"}]).
+%%                                     
+%% @end 
 %%------------------------------------------------------------------------------
+-spec get_metric_statistics(
+        Namespace   ::string(),
+        MetricName  ::string(),
+        StartTime   ::datetime() | string(),
+        EndTime     ::datetime() | string(),
+        Period      ::pos_integer(),
+        Unit        ::string(),
+        Statistics  ::[string()],
+        Dimensions  ::[{string(), string()}]
+                      ) -> term().
+
+get_metric_statistics(
+  Namespace,
+  MetricName,
+  StartTime,
+  EndTime,
+  Period,
+  Unit,
+  Statistics,
+  Dimensions
+ ) ->
+    get_metric_statistics(
+      Namespace,
+      MetricName,
+      StartTime,
+      EndTime,
+      Period,
+      Unit,
+      Statistics,
+      Dimensions,
+      default_config()
+     ).
+
 -spec get_metric_statistics(
         Namespace   ::string(),
         MetricName  ::string(),
@@ -229,20 +340,59 @@ put_metric_data(Namespace, MetricName, Value, Unit, Timestamp) ->
         Period      ::pos_integer(),
         Unit        ::string(),
         Statistics  ::[string()],
-        Dimensions  ::[string()]
+        Dimensions  ::[string()],
+        Config      ::aws_config()
                       ) -> term().
 
 get_metric_statistics(
-  _Namespace,
-  _MetricName,
-  _StartTime,
-  _EndTime,
-  _Period,
-  _Unit,
-  _Statistics,
-  _Dimensions
+  Namespace,
+  MetricName,
+  StartTime,
+  EndTime,
+  Period,
+  Unit,
+  Statistics,
+  Dimensions,
+  #aws_config{} = Config
  ) ->
-    todo.
+    Params =
+          lists:flatten([
+           {"Namespace",  Namespace},
+           {"MetricName", MetricName},
+           {"StartTime",  format_timestamp(StartTime)},
+           {"EndTime",    format_timestamp(EndTime)},
+           {"Period",     Period},
+           [{"Unit",      Unit} || Unit=/=undefined, Unit=/=""]
+          ])
+          ++
+          lists:flatten(
+            [begin
+                 Value = lists:nth(N, Statistics),
+                 [{?FMT("Statistics.member.~b", [N]), Value}]
+             end
+             || N<-lists:seq(1, length(Statistics))]
+           )
+          ++
+          lists:flatten(
+            [begin
+                 {Name, Value} = lists:nth(N, Dimensions),
+                 [{?FMT("Dimensions.member.~b.Name", [N]), Name},
+                  {?FMT("Dimensions.member.~b.Value", [N]), Value}]
+             end
+             || N<-lists:seq(1, length(Dimensions))]
+           ),
+    Doc = mon_query(Config, "GetMetricStatistics", Params),
+    Members = xmerl_xpath:string("/GetMetricStatisticsResponse/GetMetricStatisticsResult/Datapoints/member", Doc),
+    Label = get_text("Label", hd(xmerl_xpath:string("/GetMetricStatisticsResponse/GetMetricStatisticsResult", Doc))),
+    [{"label", Label}, {"datapoints", [extract_metrics(Member, Statistics) || Member <- Members]}].
+
+extract_metrics(Node, Statistics) ->
+    [
+     {timestamp, get_time("Timestamp", Node)},
+     {unit,      get_text("Unit", Node)}
+    ]
+    ++
+    [ {string:to_lower(Statistic), get_text(Statistic, Node)} || Statistic <- Statistics].
 
 %%------------------------------------------------------------------------------
 mon_simple_query(Config, Action, Params) ->
@@ -276,23 +426,23 @@ configure_host(Host, Port, Protocol) ->
                                   mon_protocol=Protocol},
     put(aws_config, NewConfig).
 
--spec(new/2 :: (string(), string()) -> aws_config()).
+-spec new(string(), string()) -> aws_config().
 new(AccessKeyID, SecretAccessKey) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey}.
 
--spec(new/3 :: (string(), string(), string()) -> aws_config()).
+-spec new(string(), string(), string()) -> aws_config().
 new(AccessKeyID, SecretAccessKey, Host) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey,
                 mon_host=Host}.
 
--spec(configure/2 :: (string(), string()) -> ok).
+-spec configure(string(), string()) -> ok.
 configure(AccessKeyID, SecretAccessKey) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey)),
     ok.
 
--spec(configure/3 :: (string(), string(), string()) -> ok).
+-spec configure(string(), string(), string()) -> ok.
 configure(AccessKeyID, SecretAccessKey, Host) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey, Host)),
     ok.

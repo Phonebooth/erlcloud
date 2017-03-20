@@ -1,20 +1,25 @@
 %% Amazon Simple Storage Service (S3)
 
 -module(erlcloud_s3).
--export([new/2, new/3, new/4, new/5,
+
+-export([new/2, new/3, new/4,
          configure/2, configure/3, configure/4, configure/5,
          create_bucket/1, create_bucket/2, create_bucket/3, create_bucket/4,
+         check_bucket_access/1, check_bucket_access/2,
          delete_bucket/1, delete_bucket/2,
          get_bucket_attribute/2, get_bucket_attribute/3,
          list_buckets/0, list_buckets/1,
          set_bucket_attribute/3, set_bucket_attribute/4,
          get_bucket_policy/1, get_bucket_policy/2,
          put_bucket_policy/2, put_bucket_policy/3,
+         get_bucket_lifecycle/1, get_bucket_lifecycle/2,
+         put_bucket_lifecycle/2, put_bucket_lifecycle/3,
+         delete_bucket_lifecycle/1, delete_bucket_lifecycle/2,
          list_objects/1, list_objects/2, list_objects/3,
          list_object_versions/1, list_object_versions/2, list_object_versions/3,
          copy_object/4, copy_object/5, copy_object/6,
          delete_objects_batch/2, delete_objects_batch/3,
-         explore_dirstructure/3,
+         explore_dirstructure/3, explore_dirstructure/4,
          delete_object/2, delete_object/3,
          delete_object_version/3, delete_object_version/4,
          get_object/2, get_object/3, get_object/4,
@@ -34,8 +39,15 @@
          get_bucket_and_key/1
         ]).
 
--include_lib("erlcloud/include/erlcloud.hrl").
--include_lib("erlcloud/include/erlcloud_aws.hrl").
+-ifdef(TEST).
+-export([encode_lifecycle/1]).
+-export([get_bucket_notification/1]).
+-export([create_notification_xml/1]).
+-export([create_notification_param_xml/2]).
+-endif.
+
+-include("erlcloud.hrl").
+-include("erlcloud_aws.hrl").
 -include_lib("xmerl/include/xmerl.hrl").
 
 %%% Note that get_bucket_and_key/1 may be used to obtain the Bucket and Key to pass to various
@@ -108,7 +120,8 @@ configure(AccessKeyID, SecretAccessKey, Host, Port, Scheme) ->
                                   | location
                                   | logging
                                   | request_payment
-                                  | versioning.
+                                  | versioning
+                                  | notification.
 
 -type s3_bucket_acl() :: private
                        | public_read
@@ -119,9 +132,23 @@ configure(AccessKeyID, SecretAccessKey, Host, Port, Scheme) ->
 
 -type s3_location_constraint() :: none
                                 | us_west_1
-                                | eu.
+                                | eu
+                                | 'us-east-1'
+                                | 'us-east-2'
+                                | 'us-west-1'
+                                | 'eu-west-1'
+                                | 'eu-west-2'
+                                | 'eu-central-1'
+                                | 'ap-south-1'
+                                | 'ap-southeast-1'
+                                | 'ap-southeast-2'
+                                | 'ap-northeast-1'
+                                | 'ap-northeast-2'
+                                | 'sa-east-1'.
+
 
 -define(XMLNS_S3, "http://s3.amazonaws.com/doc/2006-03-01/").
+-define(XMLNS_SCHEMA_INSTANCE, "http://www.w3.org/2001/XMLSchema-instance").
 
 -spec copy_object(string(), string(), string(), string()) -> proplist().
 
@@ -188,15 +215,31 @@ create_bucket(BucketName, ACL, LocationConstraint, Config)
                   private -> [];  %% private is the default
                   _       -> [{"x-amz-acl", encode_acl(ACL)}]
               end,
-    POSTData = case LocationConstraint of
-                   none -> <<>>;
-                   Location when Location =:= eu; Location =:= us_west_1 ->
-                       LocationName = case Location of eu -> "EU"; us_west_1 -> "us-west-1" end,
-                       XML = {'CreateBucketConfiguration', [{'xmlns:xsi', ?XMLNS_S3}],
+    POSTData = case encode_location_constraint(LocationConstraint) of
+                   undefined -> <<>>;
+                   LocationName ->
+                       XML = {'CreateBucketConfiguration', [{xmlns, ?XMLNS_S3}],
                               [{'LocationConstraint', [LocationName]}]},
                        list_to_binary(xmerl:export_simple([XML], xmerl_xml))
                end,
     s3_simple_request(Config, put, BucketName, "/", "", [], POSTData, Headers).
+
+encode_location_constraint(eu) -> "EU";
+encode_location_constraint(us_west_1) -> "us-west-1";
+encode_location_constraint('us-east-1') -> undefined;
+encode_location_constraint('us-east-2') -> "us-east-2";
+encode_location_constraint('us-west-1') -> "us-west-1";
+encode_location_constraint('us-west-2') -> "us-west-2";
+encode_location_constraint('eu-west-1') -> "eu-west-1";
+encode_location_constraint('eu-west-2') -> "eu-west-2";
+encode_location_constraint('eu-central-1') -> "eu-central-1";
+encode_location_constraint('ap-south-1') -> "ap-south-1";
+encode_location_constraint('ap-southeast-1') -> "ap-southeast-1";
+encode_location_constraint('ap-southeast-2') -> "ap-southeast-2";
+encode_location_constraint('ap-northeast-1') -> "ap-northeast-1";
+encode_location_constraint('ap-northeast-2') -> "ap-northeast-2";
+encode_location_constraint('sa-east-1') -> "sa-east-1";
+encode_location_constraint(_) -> undefined.
 
 encode_acl(undefined)                 -> undefined;
 encode_acl(private)                   -> "private";
@@ -217,6 +260,23 @@ delete_bucket(BucketName, Config)
   when is_list(BucketName) ->
     s3_simple_request(Config, delete, BucketName, "/", "", [], <<>>, []).
 
+-spec check_bucket_access(string()) -> ok | {error, any()}.
+
+check_bucket_access(BucketName)
+  when is_list(BucketName) ->
+    check_bucket_access(BucketName, default_config()).
+
+-spec check_bucket_access(string(), aws_config()) -> ok | {error, any()}.
+
+check_bucket_access(BucketName, Config)
+  when is_list(BucketName), is_record(Config, aws_config) ->
+    case s3_request2(Config, head, BucketName, "/", "", [], <<>>, []) of
+        {ok, {_Headers, _Body}} ->
+            ok;
+        Error ->
+            Error
+    end.
+
 
 -spec delete_objects_batch(string(), list()) -> no_return().
 delete_objects_batch(Bucket, KeyList) ->
@@ -225,14 +285,14 @@ delete_objects_batch(Bucket, KeyList) ->
 -spec delete_objects_batch(string(), list(), aws_config()) -> no_return().
 delete_objects_batch(Bucket, KeyList, Config) ->
     Data = lists:map(fun(Item) ->
-            lists:concat(["<Object><Key>", Item, "</Key></Object>"]) end, 
+            lists:concat(["<Object><Key>", Item, "</Key></Object>"]) end,
                 KeyList),
     Payload = unicode:characters_to_list(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete>" ++ Data ++ "</Delete>", 
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Delete>" ++ Data ++ "</Delete>",
                 utf8),
 
     Len = integer_to_list(string:len(Payload)),
-    Url = lists:flatten([Config#aws_config.s3_scheme, 
+    Url = lists:flatten([Config#aws_config.s3_scheme,
                 Bucket, ".", Config#aws_config.s3_host, port_spec(Config), "/?delete"]),
     Host = Bucket ++ "." ++ Config#aws_config.s3_host,
     ContentMD5 = base64:encode(erlcloud_util:md5(Payload)),
@@ -249,7 +309,7 @@ delete_objects_batch_timeout(#aws_config{timeout = Timeout}) ->
     Timeout.
 
 % returns paths list from AWS S3 root directory, used as input to delete_objects_batch
-% example : 
+% example :
 %    25> rp(erlcloud_s3:explore_dirstructure("xmppfiledev", ["sailfish/deleteme"], [])).
 %    ["sailfish/deleteme/deep/deep1/deep4/ZZZ_1.txt",
 %     "sailfish/deleteme/deep/deep1/deep4/ZZZ_0.txt",
@@ -258,25 +318,29 @@ delete_objects_batch_timeout(#aws_config{timeout = Timeout}) ->
 %    ok
 %
 -spec explore_dirstructure(string(), list(), list()) -> list().
+explore_dirstructure(Bucketname, Branches, Accum) ->
+    explore_dirstructure(Bucketname, Branches, Accum, default_config()).
 
-explore_dirstructure(_, [], Result) -> 
+-spec explore_dirstructure(string(), list(), list(), aws_config()) -> list().
+explore_dirstructure(_, [], Result, _Config) ->
                                     lists:append(Result);
-explore_dirstructure(Bucketname, [Branch|Tail], Accum) ->
+explore_dirstructure(Bucketname, [Branch|Tail], Accum, Config)
+    when is_record(Config, aws_config) ->
     ProcessContent = fun(Data)->
             Content = proplists:get_value(contents, Data),
             lists:foldl(fun(I,Acc)-> R = proplists:get_value(key, I), [R|Acc] end, [], Content)
             end,
-    
-    Data = erlcloud_s3:list_objects(Bucketname,[{prefix, Branch}, {delimiter, "/"}]),
+
+    Data = list_objects(Bucketname, [{prefix, Branch}, {delimiter, "/"}], Config),
     case proplists:get_value(common_prefixes, Data) of
         [] -> % it has reached end of the branch
             Files = ProcessContent(Data),
-            explore_dirstructure(Bucketname, Tail, [Files|Accum]);
+            explore_dirstructure(Bucketname, Tail, [Files|Accum], Config);
         Sub ->
             Files = ProcessContent(Data),
             List = lists:foldl(fun(I,Acc)-> R = proplists:get_value(prefix, I), [R|Acc] end, [], Sub),
-            Result = explore_dirstructure(Bucketname, List, Accum),
-            explore_dirstructure(Bucketname, Tail, [Result, Files|Accum])
+            Result = explore_dirstructure(Bucketname, List, Accum, Config),
+            explore_dirstructure(Bucketname, Tail, [Result, Files|Accum], Config)
     end.
 
 -spec delete_object(string(), string()) -> proplist().
@@ -321,14 +385,15 @@ list_buckets() ->
 
 list_buckets(Config) ->
     Doc = s3_xml_request(Config, get, "", "/", "", [], <<>>, []),
+    Owner = extract_user(xmerl_xpath:string("/*/Owner", Doc)),
     Buckets = [extract_bucket(Node) || Node <- xmerl_xpath:string("/*/Buckets/Bucket", Doc)],
-    [{buckets, Buckets}].
+    [{owner, Owner}, {buckets, Buckets}].
 
 %
 % @doc Get S3 bucket policy JSON object
 % API Document: http://docs.aws.amazon.com/AmazonS3/latest/API/RESTBucketGETacl.html
 %
--spec(get_bucket_policy/1 :: (BucketName::string()) -> ok | {error, Reason::term()}).
+-spec get_bucket_policy(BucketName::string()) -> ok | {error, Reason::term()}.
 get_bucket_policy(BucketName) ->
     get_bucket_policy(BucketName, default_config()).
 
@@ -344,7 +409,7 @@ get_bucket_policy(BucketName) ->
 %                                   <RequestId>DC1EA9456B266EF5</RequestId>
 %                                   <HostId>DRtkAB80cAeom+4ffSGU3PFCxS7QvtiW+wxLnPF0dM2nxoaRqQk1SK/z62ZJVHAD</HostId>
 %                               </Error>"}}
--spec(get_bucket_policy/2 :: (BucketName::string(), Config::aws_config()) -> {ok, Policy::string()} | {error, Reason::term()}).
+-spec get_bucket_policy(BucketName::string(), Config::aws_config()) -> {ok, Policy::string()} | {error, Reason::term()}.
 get_bucket_policy(BucketName, Config)
     when is_record(Config, aws_config) ->
         case s3_request2(Config, get, BucketName, "/", "policy", [], <<>>, []) of
@@ -363,12 +428,49 @@ put_bucket_policy(BucketName, Policy, Config)
   when is_list(BucketName), is_binary(Policy), is_record(Config, aws_config) ->
     s3_simple_request(Config, put, BucketName, "/", "policy", [], Policy, []).
 
+-spec get_bucket_lifecycle(BucketName::string()) -> ok | {error, Reason::term()}.
+get_bucket_lifecycle(BucketName) ->
+    get_bucket_lifecycle(BucketName, default_config()).
+
+-spec get_bucket_lifecycle(BucketName::string(), Config::aws_config()) -> {ok, Policy::string()} | {error, Reason::term()}.
+get_bucket_lifecycle(BucketName, Config)
+    when is_record(Config, aws_config) ->
+        case s3_request2(Config, get, BucketName, "/", "lifecycle", [], <<>>, []) of
+            {ok, {_Headers, Body}} ->
+                {ok, parse_lifecycle(element(1, xmerl_scan:string(binary_to_list(Body))))};
+            Error ->
+                Error
+        end.
+
+-spec put_bucket_lifecycle(string(), binary()) -> ok | {error, Reason::term()}.
+put_bucket_lifecycle(BucketName, Policy) ->
+    put_bucket_lifecycle(BucketName, Policy, default_config()).
+
+-spec put_bucket_lifecycle(string(), list() | binary(), aws_config()) -> ok | {error, Reason::term()}.
+put_bucket_lifecycle(BucketName, Policy, Config)
+  when is_list(BucketName), is_list(Policy), is_record(Config, aws_config) ->
+    XmlPolicy = encode_lifecycle(Policy),
+    put_bucket_lifecycle(BucketName, list_to_binary(XmlPolicy), Config);
+put_bucket_lifecycle(BucketName, XmlPolicy, Config)
+  when is_list(BucketName), is_binary(XmlPolicy), is_record(Config, aws_config) ->
+    Md5 = base64:encode(crypto:hash(md5, XmlPolicy)),
+    s3_simple_request(Config, put, BucketName, "/", "lifecycle",
+                      [], XmlPolicy, [{"Content-MD5", Md5}]).
+
+-spec delete_bucket_lifecycle(string()) -> ok | {error, Reason::term()}.
+delete_bucket_lifecycle(BucketName) ->
+delete_bucket_lifecycle(BucketName, default_config()).
+
+-spec delete_bucket_lifecycle(string(), #aws_config{})
+    -> ok | {error, Reason::term()}.
+delete_bucket_lifecycle(BucketName, AwsConfig) ->
+    s3_simple_request(AwsConfig, delete, BucketName,
+                      "/", "lifecycle", [], <<>>, []).
 
 -spec list_objects(string()) -> proplist().
 
 list_objects(BucketName) ->
     list_objects(BucketName, []).
-
 -spec list_objects(string(), proplist() | aws_config()) -> proplist().
 
 list_objects(BucketName, Config)
@@ -391,6 +493,7 @@ list_objects(BucketName, Options, Config)
     Attributes = [{name, "Name", text},
                   {prefix, "Prefix", text},
                   {marker, "Marker", text},
+                  {next_marker, "NextMarker", text},
                   {delimiter, "Delimiter", text},
                   {max_keys, "MaxKeys", integer},
                   {is_truncated, "IsTruncated", boolean},
@@ -434,7 +537,8 @@ get_bucket_attribute(BucketName, AttributeName, Config)
                location        -> "location";
                logging         -> "logging";
                request_payment -> "requestPayment";
-               versioning      -> "versioning"
+               versioning      -> "versioning";
+               notification    -> "notification"
            end,
     Doc = s3_xml_request(Config, get, BucketName, "/", Attr, [], <<>>, []),
     case AttributeName of
@@ -471,15 +575,155 @@ get_bucket_attribute(BucketName, AttributeName, Config)
                 "Enabled"   -> enabled;
                 "Suspended" -> suspended;
                 _           -> disabled
-            end
+            end;
+        notification ->
+            get_bucket_notification(Doc)
     end.
+
+%% gets the notifications configuration of an S3 bucket.
+%% for an example of the returned data, see tests.
+-spec get_bucket_notification(#xmlElement{}) -> proplist().
+get_bucket_notification(Doc) ->
+    SNSNotifications =
+        get_notifications_config(topic_configuration, topic,
+                                 "Topic", "TopicConfiguration", Doc),
+    SQSNotifications =
+        get_notifications_config(queue_configuration, queue,
+                                 "Queue", "QueueConfiguration", Doc),
+    LambdaNotifications =
+        get_notifications_config(cloud_function_configuration, cloud_function,
+                                 "CloudFunction", "CloudFunctionConfiguration", Doc),
+    SNSNotifications ++ SQSNotifications ++ LambdaNotifications.
+
+get_notifications_config(ConfType, AttributeName, Attr, Path, Doc) ->
+    case xmerl_xpath:string("/NotificationConfiguration/" ++ Path, Doc) of
+        [] -> [];
+        Configs when is_list(Configs) ->
+            [decode_notification_config(ConfType, AttributeName, Attr, Path, Config)
+                || Config <- Configs]
+    end.
+
+decode_notification_config(ConfType, AttributeName, Attr, Path, Config) ->
+    Attributes = s3_notification_attrs(AttributeName, Attr),
+    Configurations = [get_notification_filter(Path, Config) |
+                      erlcloud_xml:decode(Attributes, Config)],
+    [{ConfType, Configurations}].
+
+get_notification_filter(Path, Config) ->
+    get_notification_filter_do(xmerl_xpath:string("/" ++ Path ++ "/Filter/S3Key", Config)).
+
+get_notification_filter_do([]) -> [];
+get_notification_filter_do(S3Key) ->
+    #xmlElement{content = Content} = hd(S3Key),
+    GV = fun(Key, PL) -> proplists:get_value(Key, PL) end,
+    Filter0 = [erlcloud_xml:decode([{name, "Name", text}, {value, "Value", text}], C) || C <- Content],
+    Filter = [{list_to_atom(string:to_lower(GV(name, E))), GV(value, E)} || E <- Filter0],
+    {filter, Filter}.
+
+s3_notification_attrs(AttributeName, Attr) ->
+    [ {AttributeName, Attr,    text} |
+     [{id,            "Id",    optional_text},
+      {event,         "Event", list}]].
+
+parse_lifecycle(Xml) ->
+    Rules = xmerl_xpath:string("/LifecycleConfiguration/Rule", Xml),
+    [extract_rule(X) || X <- Rules].
+
+extract_rule(Xml) ->
+    erlcloud_xml:decode(
+      [
+       {expiration, "Expiration", {single, fun extract_expiration/1}},
+       {id, "ID", text},
+       {noncurrent_version_expiration, "NoncurrentVersionExpiration",
+        {optional_map, fun extract_noncurrent_version_expiration/1}},
+       {noncurrent_version_transition, "NoncurrentVersionTransition",
+        {optional_map, fun extract_noncurrent_version_transition/1}},
+       {prefix, "Prefix", text},
+       {status, "Status", text},
+       {transition, "Transition", {optional_map, fun extract_transition/1}}
+      ], Xml).
+
+encode_lifecycle(Lifecycle) ->
+    lists:flatten(xmerl:export_simple(
+                    [{'LifecycleConfiguration',
+                      lists:map(fun(Rule) ->
+                                        {'Rule', encode_rule(Rule)}
+                                end, Lifecycle)}], xmerl_xml)).
+
+encode_rule(Rule) ->
+    lists:flatten(lists:map(
+                    fun({Key, [{_, _} | _] = Proplist}) ->
+                            {key_to_name(Key), encode_subtype(Proplist)};
+                       ({Key, [[{_, _} | _], _] = ListOfProplist}) ->
+                            lists:map(fun(List) ->
+                                              {key_to_name(Key),
+                                               encode_subtype(List)}
+                                      end, ListOfProplist);
+                       ({Key, [[{_, _}, _] = List]}) ->
+                               {key_to_name(Key), encode_subtype(List)};
+                       ({Key, Value}) ->
+                               {key_to_name(Key), encode_subtype(Value)}
+                       end, Rule)).
+
+encode_subtype(List) ->
+    case List of
+        [{_, _} | _] ->
+            lists:map(fun({Key, Value}) ->
+                              {key_to_name(Key),
+                               [erlcloud_util:to_string(Value)]}
+                      end, List);
+        Value ->
+            [erlcloud_util:to_string(Value)]
+    end.
+
+extract_transition(Xml) ->
+    erlcloud_xml:decode(
+      [
+       {date, "Date", optional_text},
+       {days, "Days", optional_integer},
+       {storage_class, "StorageClass", text}
+       ], Xml).
+
+extract_noncurrent_version_transition(Xml) ->
+    erlcloud_xml:decode(
+      [{noncurrent_days, "NoncurrentDays", integer},
+       {storage_class, "StorageClass", text}], Xml).
+
+extract_noncurrent_version_expiration(Xml) ->
+    erlcloud_xml:decode([{noncurrent_days, "NoncurrentDays", integer}], Xml).
+
+extract_expiration(Xml) ->
+    erlcloud_xml:decode(
+      [{date, "Date", optional_text},
+       {days, "Days", optional_integer}], Xml).
+
+key_to_name(expiration) -> 'Expiration';
+key_to_name(id)         -> 'ID';
+key_to_name(prefix) -> 'Prefix';
+key_to_name(status) -> 'Status';
+key_to_name(transition) -> 'Transition';
+key_to_name(date) -> 'Date';
+key_to_name(days) -> 'Days';
+key_to_name('noncurrent_version_expiration') -> 'NoncurrentVersionExpiration';
+key_to_name('noncurrent_version_transition') -> 'NoncurrentVersionTransition';
+key_to_name('storage_class') -> 'StorageClass';
+key_to_name('noncurrent_days') -> 'NoncurrentDays'.
 
 extract_acl(ACL) ->
     [extract_grant(Item) || Item <- ACL].
 
-extract_grant(Node) ->
-    [{grantee, extract_user(xmerl_xpath:string("Grantee", Node))},
-     {permission, decode_permission(erlcloud_xml:get_text("Permission", Node))}].
+extract_grant(GrantNode) ->
+    [GranteeNode] = xmerl_xpath:string("Grantee", GrantNode),
+    [{grantee, extract_grantee(GranteeNode)},
+     {permission, decode_permission(erlcloud_xml:get_text("Permission", GrantNode))}].
+
+extract_grantee(Node) ->
+    erlcloud_xml:decode([
+        {type, {".", "xsi:type"}, text},
+        {id, "ID", optional_text},
+        {display_name, "DisplayName", optional_text},
+        {uri, "URI", optional_text}
+    ], Node).
 
 encode_permission(full_control) -> "FULL_CONTROL";
 encode_permission(write)        -> "WRITE";
@@ -514,13 +758,17 @@ get_object(BucketName, Key, Options, Config) ->
                       {"If-Modified-Since", proplists:get_value(if_modified_since, Options)},
                       {"If-Unmodified-Since", proplists:get_value(if_unmodified_since, Options)},
                       {"If-Match", proplists:get_value(if_match, Options)},
-                      {"If-None-Match", proplists:get_value(if_none_match, Options)}],
+                      {"If-None-Match", proplists:get_value(if_none_match, Options)},
+                      {"x-amz-server-side-encryption-customer-algorithm", proplists:get_value(server_side_encryption_customer_algorithm, Options)},
+                      {"x-amz-server-side-encryption-customer-key", proplists:get_value(server_side_encryption_customer_key, Options)},
+                      {"x-amz-server-side-encryption-customer-key-md5", proplists:get_value(server_side_encryption_customer_key_md5, Options)}],
     Subresource = case proplists:get_value(version_id, Options) of
                       undefined -> "";
                       Version   -> ["versionId=", Version]
                   end,
     {Headers, Body} = s3_request(Config, get, BucketName, [$/|Key], Subresource, [], <<>>, RequestHeaders),
-    [{etag, proplists:get_value("etag", Headers)},
+    [{last_modified, proplists:get_value("last-modified", Headers)},
+     {etag, proplists:get_value("etag", Headers)},
      {content_length, proplists:get_value("content-length", Headers)},
      {content_type, proplists:get_value("content-type", Headers)},
      {content_encoding, proplists:get_value("content-encoding", Headers)},
@@ -720,10 +968,10 @@ set_object_acl(BucketName, Key, ACL, Config)
     Id = proplists:get_value(id, proplists:get_value(owner, ACL)),
     DisplayName = proplists:get_value(display_name, proplists:get_value(owner, ACL)),
     ACL1 = proplists:get_value(access_control_list, ACL),
-    XML = {'AccessControlPolicy',
+    XML = {'AccessControlPolicy', [{'xmlns', ?XMLNS_S3}],
            [{'Owner', [{'ID', [Id]}, {'DisplayName', [DisplayName]}]},
             {'AccessControlList', encode_grants(ACL1)}]},
-    XMLText = list_to_binary(xmerl:export_simple([XML], xmerl_xml)),
+    XMLText = list_to_binary(xmerl:export_simple([XML], xmerl_xml, [{prolog, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"}])),
     s3_simple_request(Config, put, BucketName, [$/|Key], "acl", [], XMLText, [{"content-type", "application/xml"}]).
 
 -spec sign_get(integer(), string(), string(), aws_config()) -> {binary(), string()}.
@@ -971,11 +1219,47 @@ set_bucket_attribute(BucketName, AttributeName, Value, Config)
                 VersioningXML = {'VersioningConfiguration', [{'xmlns:xsi', ?XMLNS_S3}],
                                  [{'Status', [Status]},
                                   {'MfaDelete', [MFADelete]}]},
-                {"versioning", VersioningXML}
+                {"versioning", VersioningXML};
+            notification ->
+                {"notification", create_notification_xml(Value)}
         end,
     POSTData = list_to_binary(xmerl:export_simple([XML], xmerl_xml)),
     Headers = [{"content-type", "application/xml"}],
     s3_simple_request(Config, put, BucketName, "/", Subresource, [], POSTData, Headers).
+
+%% takes an S3 bucket notification configuration and creates an xmerl simple
+%% form out of it.
+%% for the examples of input / output of this function, see tests.
+-spec create_notification_xml(proplist()) -> tuple().
+create_notification_xml(Confs) ->
+    {'NotificationConfiguration', [create_notification_xml(ConfName, Params)
+        || [{ConfName, Params}] <- Confs]}.
+-spec create_notification_xml(atom(), proplist()) -> tuple().
+create_notification_xml(ConfName, Params) ->
+    {conf_name_in_xml(ConfName),
+        lists:foldr(fun create_notification_param_xml/2, [], Params)}.
+
+conf_name_in_xml(queue_configuration) -> 'QueueConfiguration';
+conf_name_in_xml(topic_configuration) -> 'TopicConfiguration';
+conf_name_in_xml(cloud_function_configuration) -> 'CloudFunctionConfiguration'.
+
+filter_rule_tuple(Name, Value) -> {'FilterRule', [{'Name', [Name]}, {'Value', [Value]}]}.
+
+filter_rule({prefix, Value}) -> filter_rule_tuple("Prefix", Value);
+filter_rule({suffix, Value}) -> filter_rule_tuple("Suffix", Value).
+
+-spec create_notification_param_xml({atom(), term()}, proplist()) -> proplist().
+%% Filter example: [{prefix, "images/"}, {suffix, "jpg"}]
+%% both prefix and suffix are optional
+create_notification_param_xml({filter, Filter}, Acc) ->
+    FilterRules = [filter_rule({Name, Value}) || {Name, Value} <- Filter],
+    [{'Filter', [{'S3Key', FilterRules}]} | Acc];
+create_notification_param_xml({event, Events}, Acc) ->
+    [{'Event', [Event]} || Event <- Events] ++ Acc;
+create_notification_param_xml({queue, Queue}, Acc) -> [{'Queue', [Queue]} | Acc];
+create_notification_param_xml({topic, Topic}, Acc) -> [{'Topic', [Topic]} | Acc];
+create_notification_param_xml({id, Id}, Acc) -> [{'Id', [Id]} | Acc];
+create_notification_param_xml({cloud_function, CF}, Acc) -> [{'CloudFunction', [CF]} | Acc].
 
 %%% See http://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html and
 %%%   http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAPI.html for info on
@@ -1016,10 +1300,10 @@ encode_grant(Grant) ->
 encode_grantee(Grantee) ->
   case proplists:get_value(id, Grantee) of
     undefined ->
-      {'Grantee', [{'xmlns:xsi', ?XMLNS_S3}, {'xsi:type', "Group"}],
+      {'Grantee', [{'xmlns:xsi', ?XMLNS_SCHEMA_INSTANCE}, {'xsi:type', "Group"}],
       [{'URI', [proplists:get_value(uri, Grantee)]}]};
     Id ->
-      {'Grantee', [{'xmlns:xsi', ?XMLNS_S3}, {'xsi:type', "CanonicalUser"}],
+      {'Grantee', [{'xmlns:xsi', ?XMLNS_SCHEMA_INSTANCE}, {'xsi:type', "CanonicalUser"}],
       [{'ID', [Id]},
        {'DisplayName', [proplists:get_value(display_name, Grantee)]}]}
   end.
@@ -1061,10 +1345,21 @@ s3_request(Config, Method, Host, Path, Subreasource, Params, POSTData, Headers) 
 
 %% s3_request2 returns {ok, Body} or {error, Reason} instead of throwing as s3_request does
 %% This is the preferred pattern for new APIs
-s3_request2(Config, Method, Host, Path, Subresource, Params, POSTData, Headers) ->
+s3_request2(Config, Method, Bucket, Path, Subresource, Params, POSTData, Headers) ->
     case erlcloud_aws:update_config(Config) of
         {ok, Config1} ->
-            s3_request2_no_update(Config1, Method, Host, Path, Subresource, Params, POSTData, Headers);
+            case s3_request4_no_update(Config1, Method, Bucket, Path,
+                   Subresource, Params, POSTData, Headers)
+            of
+                {error, {http_error, StatusCode, _, _, _}} = RedirectResponse
+                    when StatusCode >= 301 andalso StatusCode < 400 ->
+                    s3_follow_redirect(RedirectResponse, Config1, Method, Bucket, Path,
+                        Subresource, Params, POSTData, Headers);
+                {error, {http_error, StatusCode, StatusLine, Body, _Headers}} ->
+                    {error, {http_error, StatusCode, StatusLine, Body}};
+                Response ->
+                    Response
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -1085,102 +1380,100 @@ s3_xml_request2(Config, Method, Host, Path, Subresource, Params, POSTData, Heade
             Error
     end.
 
-s3_request2_no_update(Config, Method, Host, Path, Subresource, Params, Body, Headers0) ->
-    ContentType = proplists:get_value("content-type", Headers0, ""),
-    ContentMD5 = case Body of
-                     <<>> ->
-                         "";
-                     _ ->
-                         base64:encode(erlcloud_util:md5(Body))
-                 end,
-    Headers = case Config#aws_config.security_token of
-                  undefined -> Headers0;
-                  Token when is_list(Token) -> [{"x-amz-security-token", Token} | Headers0]
-              end,
-    FHeaders = [Header || {_, Value} = Header <- Headers, Value =/= undefined],
-    AmzHeaders = [Header || {"x-amz-" ++ _, _} = Header <- FHeaders],
-    Date = httpd_util:rfc1123_date(erlang:localtime()),
-    EscapedPath = erlcloud_http:url_encode_loose(Path),
-    Authorization = make_authorization(Config, Method, ContentMD5, ContentType,
-                                       Date, AmzHeaders, Host, EscapedPath, Subresource, Params),
-    RequestHeaders = [{"date", Date}, {"authorization", Authorization}|FHeaders] ++
-        case ContentMD5 of
-            "" -> [];
-            _ -> [{"content-md5", binary_to_list(ContentMD5)}]
-        end,
-    HostURI = case Config#aws_config.s3_bucket_after_host of
-                  false -> [case Host of "" -> ""; _ -> [Host, $.] end, Config#aws_config.s3_host, port_spec(Config)];
-                  true  -> [Config#aws_config.s3_host, port_spec(Config), case Host of "" -> ""; _ -> [$/, Host] end]
-              end,
-    RequestURI = lists:flatten([Config#aws_config.s3_scheme,
-                                HostURI, EscapedPath,
-                                case Subresource of "" -> ""; _ -> [$?, Subresource] end,
-                                if
-                                    Params =:= [] -> "";
-                                    Subresource =:= "" ->
-                                      [$?, erlcloud_http:make_query_string(Params, no_assignment)];
-                                    true ->
-                                      [$&, erlcloud_http:make_query_string(Params, no_assignment)]
-                                end
-                               ]),
+%% http://docs.aws.amazon.com/AmazonS3/latest/dev/UsingBucket.html#create-bucket-intro
+%% AccessMethod can be either 'vhost' - virtual-hosted–style or
+%% 'path' - older path-style URLs to access a bucket.
+s3_request4_no_update(Config, Method, Bucket, Path, Subresource, Params, Body,
+                      Headers) ->
+    ContentType = proplists:get_value("content-type", Headers, ""),
+    FParams = [Param || {_, Value} = Param <- Params, Value =/= undefined],
+    FHeaders = [Header || {_, Val} = Header <- Headers, Val =/= undefined],
 
-    Request = #aws_request{service = s3, uri = RequestURI, method = Method},
-    Request2 = case Method of
-                   M when M =:= get orelse M =:= head orelse M =:= delete ->
-                       Request#aws_request{
-                         request_headers = RequestHeaders,
-                         request_body = <<>>};
-                   _ ->
-                       Headers2 = case lists:keyfind("content-type", 1, RequestHeaders) of
-                                      false ->
-                                          [{"content-type", ContentType} | RequestHeaders];
-                                      _ ->
-                                          RequestHeaders
-                                  end,
-                       Request#aws_request{
-                         request_headers = Headers2,
-                         request_body = Body}
-               end,
-    Request3 = erlcloud_retry:request(Config, Request2, fun s3_result_fun/1),
-    erlcloud_aws:request_to_return(Request3).
+    QueryParams = case Subresource of
+        "" ->
+            FParams;
+        _ ->
+            [{Subresource, ""} | FParams]
+    end,
+
+    S3Host = Config#aws_config.s3_host,
+    AccessMethod = case Config#aws_config.s3_bucket_access_method of
+        auto ->
+            case erlcloud_util:is_dns_compliant_name(Bucket) orelse
+                 Bucket == [] of
+                true -> vhost;
+                _ -> path
+            end;
+        ManualMethod ->
+            ManualMethod
+    end,
+    {EscapedPath, HostName} =  case AccessMethod of
+        vhost ->
+            %% Add bucket name to the front of hostname,
+            %% i.e. https://bucket.name.s3.amazonaws.com/<path>
+            VHostPath = erlcloud_http:url_encode_loose(Path),
+            VHostName = lists:flatten(
+                [case Bucket of "" -> ""; _ -> [Bucket, $.] end,
+                 S3Host]),
+            {VHostPath, VHostName};
+        path ->
+            %% Add bucket name into a URL path
+            %% i.e. https://s3.amazonaws.com/bucket/<path>
+            PathStyleUrl = erlcloud_http:url_encode_loose(
+                    lists:flatten(
+                        [case Bucket of "" -> ""; _ -> ["/", Bucket] end,
+                         Path])),
+            {PathStyleUrl, S3Host}
+    end,
+
+    RequestHeaders = erlcloud_aws:sign_v4(
+        Method, EscapedPath, Config,
+        [{"host", HostName} | FHeaders ],
+        Body,
+        aws_region_from_host(S3Host),
+        "s3", QueryParams),
+
+    RequestURI = lists:flatten([
+        Config#aws_config.s3_scheme,
+        S3Host, port_spec(Config),
+        EscapedPath,
+        case Subresource of "" -> ""; _ -> [$?, Subresource] end,
+        if
+            FParams =:= [] -> "";
+            Subresource =:= "" ->
+              [$?, erlcloud_http:make_query_string(FParams, no_assignment)];
+            true ->
+              [$&, erlcloud_http:make_query_string(FParams, no_assignment)]
+        end]),
+
+    {RequestHeaders2, RequestBody} = case Method of
+                                         M when M =:= get orelse M =:= head orelse M =:= delete ->
+                                             {RequestHeaders, <<>>};
+                                         _ ->
+                                             Headers2 = case lists:keyfind("content-type", 1, RequestHeaders) of
+                                                            false ->
+                                                                [{"content-type", ContentType} | RequestHeaders];
+                                                            _ ->
+                                                                RequestHeaders
+                                                        end,
+                                             {Headers2, Body}
+                                     end,
+    Request = #aws_request{service = s3, uri = RequestURI, method = Method, request_headers = RequestHeaders2, request_body = RequestBody},
+    Request2 = erlcloud_retry:request(Config, Request, fun s3_result_fun/1),
+    erlcloud_aws:request_to_return(Request2).
+
 
 s3_result_fun(#aws_request{response_type = ok} = Request) ->
     Request;
-s3_result_fun(#aws_request{response_type = error, 
-                           error_type = aws, 
+s3_result_fun(#aws_request{response_type = error,
+                           error_type = aws,
                            response_status = Status} = Request) when
-      Status >= 500 ->
+%% Retry conflicting operations 409,Conflict and 500s
+%% including 503, SlowDown, Reduce your request rate.
+      Status =:= 409; Status >= 500 ->
     Request#aws_request{should_retry = true};
 s3_result_fun(#aws_request{response_type = error, error_type = aws} = Request) ->
     Request#aws_request{should_retry = false}.
-
-make_authorization(Config, Method, ContentMD5, ContentType, Date, AmzHeaders,
-                   Host, Resource, Subresource, Params) ->
-    CanonizedAmzHeaders =
-        [[Name, $:, Value, $\n] || {Name, Value} <- lists:sort(AmzHeaders)],
-
-    SubResourcesToInclude = ["acl", "lifecycle", "location", "logging", "notification", "partNumber", "policy", "requestPayment", "torrent", "uploadId", "uploads", "versionId", "versioning", "versions", "website"],
-    FilteredParams = [{Name, Value} || {Name, Value} <- Params,
-                                       lists:member(Name, SubResourcesToInclude)],
-
-    ParamsQueryString = erlcloud_http:make_query_string(lists:keysort(1, FilteredParams),
-                                                        no_assignment),
-    StringToSign = [string:to_upper(atom_to_list(Method)), $\n,
-                    ContentMD5, $\n,
-                    ContentType, $\n,
-                    Date, $\n,
-                    CanonizedAmzHeaders,
-                    case Host of "" -> ""; _ -> [$/, Host] end,
-                    Resource,
-                    case Subresource of "" -> ""; _ -> [$?, Subresource] end,
-                    if
-                        ParamsQueryString =:= "" -> "";
-                        Subresource =:= "" -> [$?, ParamsQueryString];
-                        true -> [$&, ParamsQueryString]
-                    end
-                   ],
-    Signature = base64:encode(erlcloud_util:sha_mac(Config#aws_config.secret_access_key, StringToSign)),
-    ["AWS ", Config#aws_config.access_key_id, $:, Signature].
 
 default_config() -> erlcloud_aws:default_config().
 
@@ -1188,3 +1481,131 @@ port_spec(#aws_config{s3_port=80}) ->
     "";
 port_spec(#aws_config{s3_port=Port}) ->
     [":", erlang:integer_to_list(Port)].
+
+%% Extract region form s3 endpoint names.
+%% http://docs.aws.amazon.com/general/latest/gr/rande.html#s3_region
+aws_region_from_host(Host) ->
+    case string:tokens(Host, ".") of
+        %% s3.eu-central-1.amazonaws.com
+        ["s3", Value, _, _] ->
+            Value;
+        %% s3.amazonaws.com
+        ["s3", _, _] ->
+            "us-east-1";
+        %% s3-external-1.amazonaws.com
+        ["s3-external-1", _, _] ->
+            "us-east-1";
+        %% For example: s3-us-east-1.amazonaws.com
+        [Value, _, _] ->
+            %% Skip "s3-" prefix
+            string:substr(Value, 4);
+        _ ->
+            "us-east-1"
+    end.
+
+%%
+%% http://docs.aws.amazon.com/AmazonS3/latest/dev/VirtualHosting.html
+%% http://docs.aws.amazon.com/AmazonS3/latest/dev/Redirects.html
+%% http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAPI.html
+%% Note: Redirects are sequentially handled '#aws_config.s3_follow_redirect_count' times.
+%% This is needed for attempts to access a bucket in non-defaut region using
+%% the path-style method. Such request is redirected to virtual-hosted bucket
+%% endpointand then - to region specific one.
+%% For example: trying to get acl of "bucket-frankfurt" in eu-central-1
+%%  region using path-style access method.
+%%
+%%  The 1st request ("https://s3.amazonaws.com/bucket-frankfurt/?acl) is
+%%  redirected to "bucket-frankfurt.s3.amazonaws.com" endpoint.
+%%
+%%  The 2nd ("https://s3.amazonaws.com/?acl" with
+%%  {"host","bucket-frankfurt.s3.amazonaws.com"} header) is redirected
+%%  to "bucket-frankfurt.s3.eu-central-1.amazonaws.com".
+%%
+%%  And finally the 3rd request succeeds -
+%%  ("https://s3.eu-central-1.amazonaws.com/?acl" with
+%%   {"host","bucket-frankfurt.s3.eu-central-1.amazonaws.com""} header)
+s3_follow_redirect(
+    {error, {http_error, StatusCode, StatusLine, ErrBody, _ErrHeaders}} = Response,
+    Config, Method, Bucket, Path, Subresource, Params, POSTData, Headers) ->
+    case Config#aws_config.s3_follow_redirect of
+        true ->
+            s3_follow_redirect_impl(Response, Config, Method, Bucket, Path,
+                Subresource, Params, POSTData, Headers,
+                Config#aws_config.s3_follow_redirect_count);
+        _ ->
+            {error, {http_error, StatusCode, StatusLine, ErrBody}}
+    end.
+
+s3_follow_redirect_impl(
+    {error, {http_error, StatusCode, StatusLine, ErrBody, _ErrHeaders}} = _Response,
+    _Config, _Method, _Bucket, _Path, _Subresource, _Params, _POSTData, _Headers, 0) ->
+    {error, {http_error, StatusCode, StatusLine, ErrBody}};
+
+s3_follow_redirect_impl(Response, Config, Method, Bucket, Path,
+        Subresource, Params, POSTData, Headers, RedirectCount) ->
+    {S3RegionEndpoint, AccessMethod} = s3_endpoint_from_response(Config, Bucket, Response),
+    case s3_request4_no_update(
+        Config#aws_config{s3_host = S3RegionEndpoint, s3_bucket_access_method = AccessMethod},
+        Method, Bucket, Path, Subresource, Params, POSTData, Headers)
+    of
+        {error, {http_error, RedirectCode, _, _, _}} = RedirectResponse
+            when RedirectCode >= 301 andalso RedirectCode < 400 ->
+                s3_follow_redirect_impl(RedirectResponse, Config, Method, Bucket, Path,
+                    Subresource, Params, POSTData, Headers, RedirectCount - 1);
+        {error, {http_error, ErrorCode, ErrorLine, ErrorBody, _ErrorHeaders}} ->
+            {error, {http_error, ErrorCode, ErrorLine, ErrorBody}};
+        FinalResponse ->
+            FinalResponse
+    end.
+
+s3_endpoint_from_response(Config, Bucket,
+        {error, {http_error, _Code, _Msg, ErrBody, ErrHeaders}} = _Response) ->
+    case {proplists:get_value("x-amz-bucket-region", ErrHeaders),
+          proplists:get_value("location", ErrHeaders)}
+    of
+        {undefined, undefined} ->
+            %% Try to get redirect location from error message.
+            XML = element(1,xmerl_scan:string(binary_to_list(ErrBody))),
+            case erlcloud_xml:get_text("/Error/Endpoint", XML) of
+                [] ->
+                    {Config#aws_config.s3_host,
+                     Config#aws_config.s3_bucket_access_method};
+                Name ->
+                    s3_endpoint_from_hostname(Name, Bucket)
+            end;
+        {undefined, RedirectUrl} ->
+            %% Use "location" header value if there is no "x-amz-bucket-region" one.
+            [_Scheme, HostName | _] =  string:tokens(RedirectUrl, "/"),
+            s3_endpoint_from_hostname(HostName, Bucket);
+        {BucketRegion, _} ->
+            %% Use "x-amz-bucket-region" header value if present.
+            {s3_endpoint_for_region(BucketRegion),
+             Config#aws_config.s3_bucket_access_method}
+    end.
+
+%% If bucket name is a part of the input hostname then virtual hosted-style access
+%% should be used to access this bucket and bucket name should be subtracted
+%% from the hostname. Otherwise send requests to provided endpoint as is
+%% using path-style method.
+%% Examples:
+%%      s3_endpoint_from_hostname(
+%%              "test.bucket.s3.eu-central-1.amazonaws.com",
+%%              "test.bucket") -> {"s3.eu-central-1.amazonaws.com", vhost}
+%%      s3_endpoint_from_hostname(
+%%              "s3.amazonaws.com",
+%%              "test.bucket") -> {"s3.amazonaws.com", path}
+s3_endpoint_from_hostname(HostName, Bucket) ->
+    case lists:prefix(Bucket, HostName) of
+        true ->
+            {HostName -- lists:flatten([Bucket, $.]), vhost};
+        false ->
+            {HostName, path}
+    end.
+
+s3_endpoint_for_region(RegionName) ->
+    case RegionName of
+        "us-east-1" ->
+            "s3-external-1.amazonaws.com";
+        _ ->
+            lists:flatten(["s3-", RegionName, ".amazonaws.com"])
+    end.

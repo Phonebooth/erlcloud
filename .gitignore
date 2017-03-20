@@ -1,6 +1,6 @@
 # IntelliJ IDEA
 /.idea
-/*.iml
+*.iml
 
 *.beam
 *.tmproj
@@ -15,5 +15,7 @@ deps/
 doc/
 erl_crash.dump
 .edts
+eunit.coverage.xml
+ercloud.iml
 *[#]*[#]
 *[#]*

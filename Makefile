@@ -14,33 +14,12 @@ else
  REBAR_VSN=3
 endif
 
-# eventually this should be just ebin/*.beam, but there are a number
-# of warnings in other files. Just check the clean files for now.
 CHECK_FILES=\
-	ebin/erlcloud_aws.beam \
-	ebin/erlcloud_cloudtrail.beam \
-	ebin/erlcloud_ddb.beam \
-	ebin/erlcloud_ddb1.beam \
-	ebin/erlcloud_ddb2.beam \
-	ebin/erlcloud_ddb_impl.beam \
-	ebin/erlcloud_ddb_util.beam \
-	ebin/erlcloud_http.beam \
-	ebin/erlcloud_httpc.beam \
-	ebin/erlcloud_retry.beam \
-	ebin/erlcloud_sts.beam \
-	ebin/erlcloud_s3.beam \
-	ebin/erlcloud_sns.beam
+	ebin/*.beam
 
-# Checks on the eunit files can help find bad specs and other issues,
-# however there are some expected errors in some of the exception
-# tests that should be ignored.
 CHECK_EUNIT_FILES=\
 	$(CHECK_FILES) \
-	.eunit/erlcloud_ddb_tests.beam \
-	.eunit/erlcloud_ddb2_tests.beam \
-	.eunit/erlcloud_ddb_util_tests.beam \
-	.eunit/erlcloud_ec2_tests.beam \
-	.eunit/erlcloud_s3_tests.beam
+	.eunit/*.beam
 
 
 all: get-deps compile
@@ -61,6 +40,13 @@ ifeq ($(REBAR_VSN),2)
 	erl -pa deps/*/ebin -pa ./ebin
 else
 	$(REBAR) shell
+endif
+
+check_warnings:
+ifeq ($(REBAR_VSN),2)
+	@echo skip checking warnings
+else
+	@$(REBAR) as warnings compile
 endif
 
 eunit:
@@ -107,3 +93,22 @@ else
 	wget https://s3.amazonaws.com/rebar3/rebar3
 	chmod a+x rebar3
 endif
+
+travis-publish:
+	@echo Create directories
+	mkdir -p ~/.hex
+	mkdir -p ~/.config/rebar3
+
+	@echo Decrypt secrets
+	@openssl aes-256-cbc -K $encrypted_9abc06b32f03_key -iv $encrypted_9abc06b32f03_iv -in hex.config.enc -out ~/.hex/hex.config -d
+
+	@echo Create global config
+	echo '{plugins, [rebar3_hex]}.' > ~/.config/rebar3/rebar.config
+
+	@echo Edit version tag in app.src
+	vi -e -c '%s/{vsn, *.*}/{vsn, "'${TRAVIS_TAG}'"}/g|w|q' src/erlcloud.app.src
+
+	@echo Publish to Hex
+	echo 'Y' | ./rebar3 hex publish
+
+	@echo Done

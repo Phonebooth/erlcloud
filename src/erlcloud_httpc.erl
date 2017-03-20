@@ -43,8 +43,11 @@ request(URL, Method, Hdrs, Body, Timeout,
     when is_function(F, 6) ->
     F(URL, Method, Hdrs, Body, Timeout, Config).
 
-request_lhttpc(URL, Method, Hdrs, Body, Timeout, _Config) ->
-    lhttpc:request(URL, Method, Hdrs, Body, Timeout, []).
+request_lhttpc(URL, Method, Hdrs, Body, Timeout, #aws_config{lhttpc_pool = undefined}) ->
+    lhttpc:request(URL, Method, Hdrs, Body, Timeout, []);
+request_lhttpc(URL, Method, Hdrs, Body, Timeout, #aws_config{lhttpc_pool = Pool}) ->
+    LHttpcOpts = [{pool, Pool}, {pool_ensure, true}],
+    lhttpc:request(URL, Method, Hdrs, Body, Timeout, LHttpcOpts).
 
 %% Guard clause protects against empty bodied requests from being
 %% unable to find a matching httpc:request call.

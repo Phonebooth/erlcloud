@@ -202,25 +202,25 @@
 %%% Library initialization.
 %%%------------------------------------------------------------------------------
 
--spec(new/2 :: (string(), string()) -> aws_config()).
+-spec new(string(), string()) -> aws_config().
 new(AccessKeyID, SecretAccessKey) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey}.
 
--spec(new/3 :: (string(), string(), string()) -> aws_config()).
+-spec new(string(), string(), string()) -> aws_config().
 new(AccessKeyID, SecretAccessKey, Host) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey,
                 ddb_host=Host}.
 
--spec(new/4 :: (string(), string(), string(), non_neg_integer()) -> aws_config()).
+-spec new(string(), string(), string(), non_neg_integer()) -> aws_config().
 new(AccessKeyID, SecretAccessKey, Host, Port) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey,
                 ddb_host=Host,
                 ddb_port=Port}.
 
--spec(new/5 :: (string(), string(), string(), non_neg_integer(), string()) -> aws_config()).
+-spec new(string(), string(), string(), non_neg_integer(), string()) -> aws_config().
 new(AccessKeyID, SecretAccessKey, Host, Port, Scheme) ->
     #aws_config{access_key_id=AccessKeyID,
                 secret_access_key=SecretAccessKey,
@@ -228,22 +228,22 @@ new(AccessKeyID, SecretAccessKey, Host, Port, Scheme) ->
                 ddb_port=Port,
                 ddb_scheme=Scheme}.
 
--spec(configure/2 :: (string(), string()) -> ok).
+-spec configure(string(), string()) -> ok.
 configure(AccessKeyID, SecretAccessKey) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey)),
     ok.
 
--spec(configure/3 :: (string(), string(), string()) -> ok).
+-spec configure(string(), string(), string()) -> ok.
 configure(AccessKeyID, SecretAccessKey, Host) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey, Host)),
     ok.
 
--spec(configure/4 :: (string(), string(), string(), non_neg_integer()) -> ok).
+-spec configure(string(), string(), string(), non_neg_integer()) -> ok.
 configure(AccessKeyID, SecretAccessKey, Host, Port) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey, Host, Port)),
     ok.
 
--spec(configure/5 :: (string(), string(), string(), non_neg_integer(), string()) -> ok).
+-spec configure(string(), string(), string(), non_neg_integer(), string()) -> ok.
 configure(AccessKeyID, SecretAccessKey, Host, Port, Scheme) ->
     put(aws_config, new(AccessKeyID, SecretAccessKey, Host, Port, Scheme)),
     ok.
@@ -388,6 +388,9 @@ dynamize_value({bs, Value}) when is_list(Value) ->
 
 dynamize_value({l, Value}) when is_list(Value) ->
     {<<"L">>, [[dynamize_value(V)] || V <- Value]};
+dynamize_value({m, []}) ->
+    %% jsx represents empty objects as [{}]
+    {<<"M">>, [{}]};
 dynamize_value({m, Value}) when is_list(Value) ->
     {<<"M">>, [dynamize_attr(Attr) || Attr <- Value]};
 
@@ -504,10 +507,6 @@ dynamize_item(Item) when is_list(Item) ->
     [dynamize_attr(Attr) || Attr <- Item];
 dynamize_item(Item) ->
     error({erlcloud_ddb, {invalid_item, Item}}).
-
--spec dynamize_expression(expression()) -> binary().
-dynamize_expression(Expression) ->
-    Expression.
 
 -spec dynamize_expression_attribute_names(expression_attribute_names()) -> [json_pair()].
 dynamize_expression_attribute_names(Names) ->
@@ -635,6 +634,9 @@ undynamize_value({<<"BS">>, Values}, _) ->
     [base64:decode(Value) || Value <- Values];
 undynamize_value({<<"L">>, List}, Opts) ->
     [undynamize_value(Value, Opts) || [Value] <- List];
+undynamize_value({<<"M">>, [{}]}, _Opts) ->
+    %% jsx returns [{}] for empty objects
+    [];
 undynamize_value({<<"M">>, Map}, Opts) ->
     [undynamize_attr(Attr, Opts) || Attr <- Map].
 
@@ -682,6 +684,9 @@ undynamize_value_typed({<<"BS">>, Values}, _) ->
     {bs, [base64:decode(Value) || Value <- Values]};
 undynamize_value_typed({<<"L">>, List}, Opts) ->
     {l, [undynamize_value_typed(Value, Opts) || [Value] <- List]};
+undynamize_value_typed({<<"M">>, [{}]}, _Opts) ->
+    %% jsx returns [{}] for empty objects
+    {m, []};
 undynamize_value_typed({<<"M">>, Map}, Opts) ->
     {m, [undynamize_attr_typed(Attr, Opts) || Attr <- Map]}.
 
@@ -864,6 +869,65 @@ conditional_op_opt() ->
 -spec expected_opt() -> opt_table_entry().
 expected_opt() ->
     {expected, <<"Expected">>, fun dynamize_expected/1}.
+
+-spec filter_expression_opt() -> opt_table_entry().
+
+filter_expression_opt() ->
+    {filter_expression, <<"FilterExpression">>, fun dynamize_expression/1}.
+
+% This matches the Java API, which asks the user to write their own expressions.
+
+-spec dynamize_expression(expression()) -> binary().
+dynamize_expression(Expression) when is_binary(Expression) ->
+    Expression;
+dynamize_expression(Expression) when is_list(Expression) ->
+    list_to_binary(Expression);
+
+% Or, some convenience functions for assembling expressions using lists of tuples.
+
+dynamize_expression({A, also, B}) ->
+    AA = dynamize_expression(A),
+    BB = dynamize_expression(B),
+    <<"(", AA/binary, ") AND (", BB/binary, ")">>;
+dynamize_expression({{A, B}, eq}) ->
+    <<A/binary, " = ", B/binary>>;
+dynamize_expression({{A, B}, ne}) ->
+    <<A/binary, " <> ", B/binary>>;
+dynamize_expression({{A, B}, lt}) ->
+    <<A/binary, " < ", B/binary>>;
+dynamize_expression({{A, B}, le}) ->
+    <<A/binary, " <= ", B/binary>>;
+dynamize_expression({{A, B}, gt}) ->
+    <<A/binary, " > ", B/binary>>;
+dynamize_expression({{A, B}, ge}) ->
+    <<A/binary, " >= ", B/binary>>;
+dynamize_expression({{A, {Low, High}}, between}) ->
+    <<A/binary, " BETWEEN ", Low/binary, " AND ", High/binary>>;
+dynamize_expression({{A, B}, in}) when is_binary(B) ->
+    <<A/binary, " IN ", B/binary>>;
+dynamize_expression({{A, B}, in}) when is_list(B) ->
+    % Convert everything to binaries.
+
+    InList = [to_binary(X) || X <- B],
+
+    % Join the list of binaries with commas.
+
+    Join = fun(Elem, Acc) when Acc =:= <<"">> ->
+                Elem;
+              (Elem, Acc) ->
+                <<Acc/binary, ",", Elem/binary>> end,
+
+    In = lists:foldl(Join, <<>>, InList),
+
+    <<A/binary, " IN (", In/binary, ")">>;
+dynamize_expression({attribute_exists, Path}) ->
+    <<"attribute_exists(", Path/binary, ")">>;
+dynamize_expression({attribute_not_exists, Path}) ->
+    <<"attribute_not_exists(", Path/binary, ")">>;
+dynamize_expression({begins_with, Path, Operand}) ->
+    <<"begins_with(", Path/binary, ",", Operand/binary, ")">>;
+dynamize_expression({contains, Path, Operand}) ->
+    <<"contains(", Path/binary, ",", Operand/binary, ")">>.
 
 -type return_consumed_capacity_opt() :: {return_consumed_capacity, return_consumed_capacity()}.
 
@@ -1477,6 +1541,21 @@ delete_item(Table, Key, Opts) ->
 %%       [{return_values, all_old},
 %%        {condition_expression, <<"attribute_not_exists(Replies)">>}]),
 %% '
+%%
+%% The ConditionExpression option can also be used in place of the legacy
+%% ConditionalOperator or Expected parameters.
+%%
+%% `
+%% {ok, Item} = 
+%%     erlcloud_ddb2:delete_item(
+%%       <<"Thread">>, 
+%%       [{<<"ForumName">>, {s, <<"Amazon DynamoDB">>}},
+%%        {<<"Subject">>, {s, <<"How do I update multiple items?">>}}],
+%%       [{return_values, all_old},
+%%        {condition_expression, <<"attribute_not_exists(#replies)">>},
+%%        {expression_attribute_names, [{<<"#replies">>, <<"Replies">>}]}]),
+%% '
+%%
 %% @end
 %%------------------------------------------------------------------------------
 -spec delete_item(table_name(), key(), delete_item_opts(), aws_config()) -> delete_item_return().
@@ -1833,6 +1912,25 @@ put_item(Table, Item, Opts) ->
 %%         [{<<":f">>, <<"Amazon DynamoDB">>},
 %%          {<<":s">>, <<"How do I update multiple items?">>}]}]),
 %% '
+%%
+%% The ConditionExpression option can be used in place of the legacy Expected parameter.
+%%
+%% `
+%% {ok, []} = 
+%%     erlcloud_ddb2:put_item(
+%%       <<"Thread">>, 
+%%       [{<<"LastPostedBy">>, <<"fred@example.com">>},
+%%        {<<"ForumName">>, <<"Amazon DynamoDB">>},
+%%        {<<"LastPostDateTime">>, <<"201303190422">>},
+%%        {<<"Tags">>, {ss, [<<"Update">>, <<"Multiple Items">>, <<"HelpMe">>]}},
+%%        {<<"Subject">>, <<"How do I update multiple items?">>},
+%%        {<<"Message">>, 
+%%         <<"I want to update multiple items in a single API call. What is the best way to do that?">>}],
+%%       [{condition_expression, <<"#forum <> :forum AND attribute_not_exists(#subject)">>},
+%%        {expression_attribute_names, [{<<"#forum">>, <<"ForumName">>}, {<<"#subject">>, <<"Subject">>}]},
+%%        {expression_attribute_values, [{<<":forum">>, <<"Amazon DynamoDB">>}]}]),
+%% '
+%%
 %% @end
 %%------------------------------------------------------------------------------
 -spec put_item(table_name(), in_item(), put_item_opts(), aws_config()) -> put_item_return().
@@ -1875,7 +1973,7 @@ q_opts() ->
      projection_expression_opt(),
      attributes_to_get_opt(),
      consistent_read_opt(),
-     {filter_expression, <<"FilterExpression">>, fun dynamize_expression/1},
+     filter_expression_opt(),
      conditional_op_opt(),
      {query_filter, <<"QueryFilter">>, fun dynamize_conditions/1},
      {limit, <<"Limit">>, fun id/1},
@@ -1938,8 +2036,12 @@ q(Table, KeyConditionsOrExpression, Opts) ->
 %%        {index_name, <<"LastPostIndex">>},
 %%        {select, all_attributes},
 %%        {limit, 3},
-%%        {consistent_read, true}]),
+%%        {consistent_read, true},
+%%        {filter_expression, <<"#user = :user">>},
+%%        {expression_attribute_names, [{<<"#user">>, <<"User">>}]},
+%%        {expression_attribute_values, [{<<":user">>, <<"User A">>}]}]),
 %% '
+%%
 %% @end
 %%------------------------------------------------------------------------------
 -spec q(table_name(), conditions() | expression(), q_opts(), aws_config()) -> q_return().
@@ -1983,7 +2085,7 @@ scan_opts() ->
      projection_expression_opt(),
      attributes_to_get_opt(),
      consistent_read_opt(),
-     {filter_expression, <<"FilterExpression">>, fun dynamize_expression/1},
+     filter_expression_opt(),
      conditional_op_opt(),
      {scan_filter, <<"ScanFilter">>, fun dynamize_conditions/1},
      {limit, <<"Limit">>, fun id/1},
@@ -2215,7 +2317,7 @@ update_table_record() ->
     {#ddb2_update_table{},
      [{<<"TableDescription">>, #ddb2_update_table.table_description,
        fun(V, Opts) -> undynamize_record(table_description_record(), V, Opts) end}
-     ]}. 
+     ]}.
 
 -spec update_table(table_name(), update_table_opts()) -> update_table_return().
 update_table(Table, Opts) ->
@@ -2245,18 +2347,27 @@ update_table(Table, Opts, Config) when is_list(Opts) ->
     Return = erlcloud_ddb_impl:request(
                Config,
                "DynamoDB_20120810.UpdateTable",
-               [{<<"TableName">>, Table}]
-                ++ AwsOpts),
+               [{<<"TableName">>, Table} | AwsOpts]),
     out(Return, fun(Json, UOpts) -> undynamize_record(update_table_record(), Json, UOpts) end, 
         DdbOpts, #ddb2_update_table.table_description);
 update_table(Table, ReadUnits, WriteUnits) ->
     update_table(Table, ReadUnits, WriteUnits, [], default_config()).
 
--spec update_table(table_name(), read_units(), write_units(), update_table_opts()) -> update_table_return().
+-spec update_table(table_name(), read_units(), write_units(), update_table_opts()) 
+                  -> update_table_return().
 update_table(Table, ReadUnits, WriteUnits, Opts) ->
     update_table(Table, ReadUnits, WriteUnits, Opts, default_config()).
 
--spec update_table(table_name(), read_units(), write_units(), update_table_opts(), aws_config())
+-spec update_table(table_name(), non_neg_integer(), non_neg_integer(), update_table_opts(), 
+                   aws_config()) 
                   -> update_table_return().
 update_table(Table, ReadUnits, WriteUnits, Opts, Config) ->
     update_table(Table, [{provisioned_throughput, {ReadUnits, WriteUnits}} | Opts], Config).
+
+
+to_binary(X) when is_binary(X) ->
+    X;
+to_binary(X) when is_list(X) ->
+    list_to_binary(X);
+to_binary(X) when is_integer(X) ->
+    integer_to_binary(X).
